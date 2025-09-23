@@ -28,6 +28,10 @@ data/*
 !data/.gitkeep
 *.csv
 *.json
+*.db
+data/scrape_output/*.csv
+data/scrape_output/*.json
+data/scrape_output/*.db
 
 # Reports & cache
 dist/
