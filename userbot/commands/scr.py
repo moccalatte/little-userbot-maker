@@ -42,5 +42,16 @@ register(
         description="Aktifkan listener pesan grup dengan rules JSON.",
         usage="'<rules_json>' | stop|off",
         handler=handle_scr,
+        help_text=(
+            "Aktifkan mode scraping pesan grup berbasis rules JSON.\n\n"
+            "Argumen rules_json mendukung tiga kunci:\n"
+            "- include: daftar kata kunci yang wajib ada dalam pesan.\n"
+            "- exclude: daftar kata kunci yang jika muncul akan menolak pesan.\n"
+            "- regex: daftar pola regex opsional untuk filter lanjutan.\n"
+            "Semua pencocokan tidak peka huruf besar kecil.\n\n"
+            "Contoh:\n"
+            "!scr '{\"include\": [\"promo\", \"diskon\"], \"exclude\": [\"hoax\"], \"regex\": []}'\n\n"
+            "Gunakan !scr stop atau !scr off untuk menghentikan listener dan menyimpan buffer ke file."
+        ),
     )
 )

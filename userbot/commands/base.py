@@ -71,3 +71,4 @@ class CommandSpec:
     description: str
     usage: str
     handler: CommandHandlerType
+    help_text: Optional[str] = None

@@ -63,5 +63,14 @@ register(
         description="Tampilkan ID grup yang tergabung.",
         usage="[next|prev|refresh]",
         handler=handle_gg,
+        help_text=(
+            "Menampilkan daftar grup/channel yang kamu ikuti beserta ID-nya.\n\n"
+            "Perintah terkait:\n"
+            "- !gg           => muat halaman pertama (50 entri per halaman).\n"
+            "- !gg next      => tampilkan halaman berikutnya.\n"
+            "- !gg prev      => kembali ke halaman sebelumnya.\n"
+            "- !gg refresh   => muat ulang daftar dari Telegram.\n\n"
+            "Tip: salin daftar yang dikirim bot bila ingin disimpan ke dokumen lain."
+        ),
     )
 )

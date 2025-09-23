@@ -48,5 +48,20 @@ register(
         description="Jadwalkan broadcast ke grup dengan interval menit.",
         usage='"pesan" <interval_menit> <target|allgroup> | stop|off',
         handler=handle_sg,
+        help_text=(
+            "Jadwalkan pesan agar dikirim berkala ke beberapa grup.\n\n"
+            "Format umum:\n"
+            "!sg \"pesan\" <interval_menit> <target|allgroup>\n\n"
+            "Penjelasan argumen:\n"
+            "- \"pesan\": isi pesan yang akan dikirim. Gunakan tanda petik jika ada spasi.\n"
+            "- <interval_menit>: angka bulat > 0 sebagai jeda antar pengiriman.\n"
+            "- <target|allgroup>:\n"
+            "    • allgroup => kirim ke seluruh grup/channel yang diikuti akun.\n"
+            "    • daftar ID dipisah koma, contoh: 123456789,987654321.\n\n"
+            "Contoh:\n"
+            "!sg \"Reminder standup\" 30 allgroup\n"
+            "!sg \"Promo spesial hari ini\" 60 123456789,987654321\n\n"
+            "Hentikan jadwal dengan !sg stop atau !sg off."
+        ),
     )
 )
