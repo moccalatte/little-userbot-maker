@@ -104,6 +104,7 @@ class ScrapeStorage:
                     "timestamp",
                     "chat_id",
                     "chat_title",
+                    "sender_username",
                     "message_text",
                     "rule_tag",
                 ]

@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set
 
 from telethon import TelegramClient, events
+from telethon.tl.patched import Message
+from telethon.tl.types import Channel, Chat, User
 
 from common.storage import ScrapeStorage
 
@@ -107,10 +109,12 @@ class ScrapeController:
                     self.rules,
                 )
                 return
+            sender = await self._resolve_sender(event)
             row = {
                 "timestamp": event.date.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "chat_id": str(event.chat_id),
                 "chat_title": getattr(event.chat, "title", ""),
+                "sender_username": sender,
                 "message_text": message_text.replace("\n", " "),
                 "rule_tag": ",".join(self.rules.get("include", [])),
             }
@@ -205,3 +209,19 @@ class ScrapeController:
             logger.addHandler(handler)
         logger.setLevel(logging.INFO)
         logger.propagate = False
+
+    async def _resolve_sender(self, event: events.NewMessage.Event) -> str:
+        try:
+            sender = await event.get_sender()
+        except Exception:
+            logger.debug("Tidak bisa resolve sender", exc_info=True)
+            return ""
+        if isinstance(sender, User):
+            username = sender.username or sender.first_name or ""
+        elif isinstance(sender, Channel):
+            username = sender.username or sender.title or ""
+        elif isinstance(sender, Chat):
+            username = sender.title or ""
+        else:
+            username = getattr(sender, "title", "") or getattr(sender, "username", "")
+        return username or ""
