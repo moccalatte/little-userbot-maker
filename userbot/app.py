@@ -52,6 +52,7 @@ class UserbotApp:
             storage=self.storage,
             me_id=self.me_id,
             rate_limit_seconds=self.settings.rate_limit_interval,
+            log_dir=self.settings.log_dir,
         )
         self.client.add_event_handler(self._handle_command, events.NewMessage(outgoing=True))
         forward_to_telegram(self.logger, self._build_forwarder())
@@ -59,9 +60,23 @@ class UserbotApp:
         await self.client.run_until_disconnected()
 
     async def _handle_command(self, event: events.NewMessage.Event) -> None:
-        if event.sender_id != self.me_id:
+        logger.info(
+            "Event diterima: sender=%s me_id=%s outgoing=%s chat=%s raw=%s",
+            event.sender_id,
+            self.me_id,
+            getattr(event, "out", None),
+            event.chat_id,
+            event.raw_text,
+        )
+        if event.sender_id not in (None, self.me_id):
+            logger.info(
+                "Event diabaikan karena sender %s != me_id %s",
+                event.sender_id,
+                self.me_id,
+            )
             return
         if not self.router:
+            logger.error("Router belum tersedia saat menerima event")
             return
         await self.router.dispatch(event)
 
@@ -93,4 +108,3 @@ class UserbotApp:
 async def run_userbot(settings: UserbotSettings) -> None:
     app = UserbotApp(settings)
     await app.start()
-

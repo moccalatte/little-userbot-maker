@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
@@ -38,7 +38,7 @@ class SessionRepository:
     def save(self, record: SessionRecord) -> None:
         with self._lock:
             records = self._read()
-            records.append(record.__dict__)
+            records.append(asdict(record))
             # Batasi 100 entri
             if len(records) > 100:
                 records = records[-100:]

@@ -9,7 +9,7 @@ async def handle_help(ctx: CommandContext, args: list[str]) -> None:
     lines = ["Daftar perintah:"]
     for spec in get_commands().values():
         lines.append(f"- !{spec.name} {spec.usage} — {spec.description}")
-    await ctx.event.reply("\n".join(lines))
+    await ctx.reply("\n".join(lines))
 
 
 register(
@@ -20,4 +20,3 @@ register(
         handler=handle_help,
     )
 )
-

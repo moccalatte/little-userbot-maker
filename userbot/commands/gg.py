@@ -15,12 +15,12 @@ async def handle_gg(ctx: CommandContext, args: list[str]) -> None:
         await _refresh_groups(ctx, owner_state)
     elif command == "next":
         if not owner_state.items:
-            await ctx.event.reply("Belum ada data. Jalankan !gg dulu.")
+            await ctx.reply("Belum ada data. Jalankan !gg dulu.")
             return
         owner_state.next_page()
     elif command == "prev":
         if not owner_state.items:
-            await ctx.event.reply("Belum ada data. Jalankan !gg dulu.")
+            await ctx.reply("Belum ada data. Jalankan !gg dulu.")
             return
         owner_state.prev_page()
     else:
@@ -48,13 +48,13 @@ async def _refresh_groups(ctx: CommandContext, state: PaginationState) -> None:
 
 async def _send_page(ctx: CommandContext, state: PaginationState) -> None:
     if not state.items:
-        await ctx.event.reply("Tidak ada grup yang ditemukan. Gunakan Telegram untuk bergabung.")
+        await ctx.reply("Tidak ada grup yang ditemukan. Gunakan Telegram untuk bergabung.")
         return
     page_items = state.current_page_items()
     total_pages = max(1, (len(state.items) + state.page_size - 1) // state.page_size)
     header = f"Halaman {state.page + 1}/{total_pages}. Gunakan !gg next/prev untuk navigasi."
     footer = "Ketik !gg refresh untuk memuat ulang. Untuk ekspor, salin daftar ini ke CSV manual."
-    await ctx.event.reply("\n".join([header, *page_items, footer]))
+    await ctx.reply("\n".join([header, *page_items, footer]))
 
 
 register(
@@ -65,4 +65,3 @@ register(
         handler=handle_gg,
     )
 )
-
