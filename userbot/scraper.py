@@ -24,18 +24,24 @@ class ScrapeController:
         self._buffer_lock = asyncio.Lock()
         self._flush_task: Optional[asyncio.Task] = None
         self._active = False
+        self._allowed_chats: Optional[set[int]] = None
 
     def is_active(self) -> bool:
         return self._active
 
-    async def start(self, rules: Dict[str, List[str]]) -> None:
+    async def start(self, rules: Dict[str, List[str]], chat_ids: Optional[List[int]] = None) -> None:
         self.rules = rules
         self._compiled_regex = [re.compile(pattern, re.IGNORECASE) for pattern in rules.get("regex", [])]
+        self._allowed_chats = set(chat_ids) if chat_ids else None
         if not self._event_builder:
             self._event_builder = events.NewMessage(incoming=True)
             self.client.add_event_handler(self._on_new_message, self._event_builder)
         self._active = True
-        logger.info("Scrape listener aktif dengan rules %s", rules)
+        logger.info(
+            "Scrape listener aktif dengan rules %s untuk chats %s",
+            rules,
+            sorted(self._allowed_chats) if self._allowed_chats else "semua grup",
+        )
 
     async def stop(self) -> None:
         self._active = False
@@ -45,6 +51,7 @@ class ScrapeController:
             except Exception:
                 logger.debug("Gagal remove handler", exc_info=True)
             self._event_builder = None
+        self._allowed_chats = None
         if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
             try:
@@ -58,6 +65,8 @@ class ScrapeController:
 
     async def _on_new_message(self, event: events.NewMessage.Event) -> None:
         if not self._active or not event.is_group:
+            return
+        if self._allowed_chats and event.chat_id not in self._allowed_chats:
             return
         try:
             message_text = event.raw_text or ""
