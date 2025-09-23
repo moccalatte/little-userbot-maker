@@ -1,0 +1,41 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Editor directories
+.vscode/
+.idea/
+*.swp
+
+# Environment and secrets
+.env
+.env.*
+secret.key
+
+# Runtime artifacts
+logs/
+*.log
+session.session
+sessiongen/session.session
+
+# Data outputs
+data/*
+!data/.gitkeep
+*.csv
+*.json
+
+# Reports & cache
+dist/
+build/
+coverage/
+.pytest_cache/
+.mypy_cache/
+
+# OS junk
+.DS_Store
+Thumbs.db
