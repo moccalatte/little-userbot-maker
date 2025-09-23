@@ -4,17 +4,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set
 
 from telethon import TelegramClient, events
 
 from common.storage import ScrapeStorage
 
-logger = logging.getLogger("userbot")
+logger = logging.getLogger("userbot.scr")
 
 
 class ScrapeController:
-    def __init__(self, client: TelegramClient, storage: ScrapeStorage) -> None:
+    def __init__(self, client: TelegramClient, storage: ScrapeStorage, log_dir: str | Path | None = None) -> None:
         self.client = client
         self.storage = storage
         self.rules: Dict[str, List[str]] = {"include": [], "exclude": [], "regex": []}
@@ -26,6 +28,8 @@ class ScrapeController:
         self._active = False
         self._allowed_chats: Optional[Set[int]] = None
         self._matched_count = 0
+        self._output_path: Optional[Path] = None
+        self._setup_logger(log_dir)
 
     def is_active(self) -> bool:
         return self._active
@@ -35,6 +39,7 @@ class ScrapeController:
         self._compiled_regex = [re.compile(pattern, re.IGNORECASE) for pattern in rules.get("regex", [])]
         self._allowed_chats = self._build_allowed_chats(chat_ids) if chat_ids else None
         self._matched_count = 0
+        self._output_path = self.storage.allocate_file()
         if not self._event_builder:
             self._event_builder = events.NewMessage(incoming=True, outgoing=True)
             self.client.add_event_handler(self._on_new_message, self._event_builder)
@@ -44,6 +49,8 @@ class ScrapeController:
             rules,
             sorted(self._allowed_chats) if self._allowed_chats else "semua grup",
         )
+        if self._output_path:
+            logger.info("Hasil scrape akan ditulis ke %s", self._output_path)
 
     async def stop(self) -> None:
         self._active = False
@@ -63,8 +70,13 @@ class ScrapeController:
         self._flush_task = None
         async with self._buffer_lock:
             await self._flush_buffer_locked()
+        output_path = self._output_path
+        self._output_path = None
         logger.info("Scrape listener dihentikan setelah menangkap %s pesan", self._matched_count)
-        logger.info("Scrape listener dihentikan")
+        if output_path:
+            logger.info("Scrape listener dihentikan. Hasil terakhir tercatat di %s", output_path)
+        else:
+            logger.info("Scrape listener dihentikan")
 
     async def _on_new_message(self, event: events.NewMessage.Event) -> None:
         if not self._active:
@@ -144,8 +156,10 @@ class ScrapeController:
         rows = list(self._buffer)
         self._buffer.clear()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self.storage.append_rows, rows)
-        logger.info("Menulis %s baris hasil scrape", len(rows))
+        output_path = await loop.run_in_executor(
+            None, self.storage.append_rows, rows, self._output_path
+        )
+        logger.info("Menulis %s baris hasil scrape ke %s", len(rows), output_path)
 
     def _build_allowed_chats(self, chat_ids: Iterable[int]) -> Set[int]:
         result: Set[int] = set()
@@ -169,3 +183,25 @@ class ScrapeController:
     @staticmethod
     def _to_supergroup_id(channel_id: int) -> int:
         return -1000000000000 - channel_id
+
+    def _setup_logger(self, log_dir: str | Path | None) -> None:
+        if log_dir is None:
+            return
+        log_path = Path(log_dir)
+        log_path.mkdir(parents=True, exist_ok=True)
+        file_path = log_path / "userbot_scr.log"
+        already = any(
+            getattr(handler, "baseFilename", None) == str(file_path)
+            for handler in logger.handlers
+        )
+        if not already:
+            handler = RotatingFileHandler(file_path, maxBytes=5 * 1024 * 1024, backupCount=2)
+            handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s | %(levelname)s | %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+            )
+            logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        logger.propagate = False

@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
 from .masking import mask_phone
 
@@ -81,10 +81,23 @@ class ScrapeStorage:
     def directory(self) -> Path:
         return self._dir
 
-    def append_rows(self, rows: Iterable[dict[str, Any]]) -> Path:
+    def allocate_file(self) -> Path:
         timestamp = datetime.utcnow().strftime("%Y%m%d")
-        file_path = self._dir / f"scrape_{timestamp}.csv"
         with self._lock:
+            existing = sorted(self._dir.glob(f"scrape_{timestamp}_*.csv"))
+            index = len(existing) + 1
+            file_path = self._dir / f"scrape_{timestamp}_{index}.csv"
+            return file_path
+
+    def append_rows(self, rows: Iterable[dict[str, Any]], file_path: Optional[Path] = None) -> Path:
+        timestamp = datetime.utcnow().strftime("%Y%m%d")
+        with self._lock:
+            if file_path is None:
+                existing = sorted(self._dir.glob(f"scrape_{timestamp}_*.csv"))
+                if existing:
+                    file_path = existing[-1]
+                else:
+                    file_path = self._dir / f"scrape_{timestamp}_1.csv"
             file_exists = file_path.exists()
             with file_path.open("a", encoding="utf-8", newline="") as csvfile:
                 fieldnames = [
@@ -99,7 +112,7 @@ class ScrapeStorage:
                     writer.writeheader()
                 for row in rows:
                     writer.writerow(row)
-        return file_path
+            return file_path
 
 
 def hash_phone_for_storage(phone: str) -> str:

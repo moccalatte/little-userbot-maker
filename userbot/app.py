@@ -41,7 +41,7 @@ class UserbotApp:
         me = await self.client.get_me()
         self.me_id = me.id
         self.scheduler = BroadcastScheduler(self.client, self.settings.rate_limit_interval)
-        self.scraper = ScrapeController(self.client, self.storage)
+        self.scraper = ScrapeController(self.client, self.storage, self.settings.log_dir)
         self.runtime.scheduler = self.scheduler
         self.runtime.scraper = self.scraper
         self.router = CommandRouter(

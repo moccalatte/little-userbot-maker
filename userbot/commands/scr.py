@@ -1,6 +1,8 @@
 """Implementasi !scr untuk listener."""
 from __future__ import annotations
 
+from telethon.tl.types import Channel, Chat, User
+
 from common.validators import parse_rules_json
 
 from ..rules_store import RulesStore
@@ -46,10 +48,10 @@ async def handle_scr(ctx: CommandContext, args: list[str]) -> None:
         await ctx.reply(f"Gagal mengaktifkan listener: {exc}")
         return
     RulesStore(ctx.storage).save_rules(rules, targets)
+    target_desc = await _describe_targets(ctx, targets)
     await ctx.reply(
-        "Listener aktif untuk %s target. Pesan yang cocok akan dicatat ke CSV di folder data/. "
-        "Gunakan !scr stop untuk menghentikan."
-        % len(targets)
+        "Listener ON! %s. Pesan yang cocok akan dicatat ke CSV di folder data/. "
+        "Gunakan !scr stop untuk menghentikan." % target_desc
     )
 
 
@@ -74,3 +76,41 @@ register(
         ),
     )
 )
+
+
+async def _describe_targets(ctx: CommandContext, targets: list[int]) -> str:
+    if not targets:
+        return "(tanpa target)"
+
+    dialogs = await ctx.client.get_dialogs()
+    mapping: dict[int, tuple[str, str]] = {}
+    for dialog in dialogs:
+        entity = getattr(dialog, "entity", None)
+        if entity is None:
+            continue
+        name = dialog.name or getattr(entity, "title", None) or getattr(entity, "first_name", "(tanpa nama)")
+        if isinstance(entity, Channel):
+            kind = "channel" if bool(getattr(entity, "broadcast", False)) else "group"
+        elif isinstance(entity, Chat):
+            kind = "group"
+        elif isinstance(entity, User):
+            kind = "user"
+        else:
+            kind = "chat"
+        mapping[entity.id] = (kind, name)
+
+    def _normalize(chat_id: int) -> int:
+        if chat_id < 0 and str(chat_id).startswith("-100"):
+            try:
+                return int(str(chat_id)[4:])
+            except ValueError:
+                return chat_id
+        return chat_id
+
+    descriptions: list[str] = []
+    for chat_id in targets[:3]:
+        kind, name = mapping.get(_normalize(chat_id), ("chat", "(tidak diketahui)"))
+        descriptions.append(f"({kind}: {name} id={chat_id})")
+    if len(targets) > 3:
+        descriptions.append(f"dan {len(targets) - 3} target lain")
+    return ", ".join(descriptions)
