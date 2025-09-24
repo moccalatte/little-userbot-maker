@@ -16,6 +16,7 @@ class BaseSettings:
     log_level: str = "INFO"
     log_dir: str = "./logs"
     telegram_log_chat_id: Optional[int] = None
+    database_path: Path = Path("./data/userbotmaker.db")
 
 
 @dataclass(slots=True)
@@ -67,6 +68,7 @@ def load_bot_settings() -> BotSettings:
     data_dir = Path(os.getenv("DATA_DIR", "./data"))
     session_output_file = os.getenv("SESSION_OUTPUT_FILE") or os.getenv("SESSION_FILE")
     qr_timeout = _get_int("QR_TIMEOUT", 180) or 180
+    database_path = Path(os.getenv("DATABASE_PATH", str(data_dir / "userbotmaker.db")))
     return BotSettings(
         bot_token=token,
         secret_key=secret_key,
@@ -77,6 +79,7 @@ def load_bot_settings() -> BotSettings:
         data_dir=data_dir,
         session_output_file=session_output_file,
         qr_timeout=qr_timeout,
+        database_path=database_path,
     )
 
 
@@ -87,6 +90,7 @@ def load_sessiongen_settings() -> SessionGenSettings:
     log_dir = os.getenv("LOG_DIR", "./logs")
     chat_id = _get_int("TELEGRAM_LOG_CHAT_ID", None)
     data_dir = Path(os.getenv("DATA_DIR", "./data"))
+    database_path = Path(os.getenv("DATABASE_PATH", str(data_dir / "userbotmaker.db")))
     return SessionGenSettings(
         bot_token=token,
         secret_key=secret_key,
@@ -94,6 +98,7 @@ def load_sessiongen_settings() -> SessionGenSettings:
         log_dir=log_dir,
         telegram_log_chat_id=chat_id,
         data_dir=data_dir,
+        database_path=database_path,
     )
 
 
@@ -106,6 +111,7 @@ def load_userbot_settings() -> UserbotSettings:
     chat_id = _get_int("TELEGRAM_LOG_CHAT_ID", None)
     rate_limit_interval = _get_int("RATE_LIMIT_INTERVAL", 30) or 30
     storage_dir = Path(os.getenv("DATA_DIR", "./data"))
+    database_path = Path(os.getenv("DATABASE_PATH", str(storage_dir / "userbotmaker.db")))
     return UserbotSettings(
         api_id=api_id,
         api_hash=api_hash,
@@ -115,4 +121,5 @@ def load_userbot_settings() -> UserbotSettings:
         telegram_log_chat_id=chat_id,
         rate_limit_interval=rate_limit_interval,
         storage_dir=storage_dir,
+        database_path=database_path,
     )

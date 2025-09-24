@@ -12,6 +12,7 @@ from typing import Dict, Iterable, List, Optional, Set
 from telethon import TelegramClient, events
 from telethon.tl.types import Channel, Chat, User
 
+from common.database import Database
 from common.storage import ScrapeStorage
 
 logger = logging.getLogger("userbot.scr")
@@ -32,11 +33,19 @@ class ScrapeSession:
 
 
 class ScrapeController:
-    def __init__(self, client: TelegramClient, storage: ScrapeStorage, log_dir: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        client: TelegramClient,
+        database: Database,
+        user_id: int,
+        storage: ScrapeStorage,
+        log_dir: str | Path | None = None,
+    ) -> None:
         self.client = client
+        self._database = database
+        self._user_id = user_id
         self.storage = storage
         self._sessions: Dict[int, ScrapeSession] = {}
-        self._next_session_id = 1
         self._event_builder: Optional[events.NewMessage] = None
         self._setup_logger(log_dir)
 
@@ -45,8 +54,6 @@ class ScrapeController:
         return bool(self._sessions)
 
     async def start(self, rules: Dict[str, List[str]], chat_ids: Optional[List[int]] = None) -> int:
-        session_id = self._next_session_id
-        self._next_session_id += 1
         compiled: List[re.Pattern[str]] = []
         for pattern in rules.get("regex", []) or []:
             try:
@@ -57,6 +64,14 @@ class ScrapeController:
         allowed = self._build_allowed_chats(normalized_ids) if normalized_ids else None
         raw_ids = normalized_ids
         output_path = self.storage.allocate_file()
+        session_id = self._database.add_scraper_session(
+            user_id=self._user_id,
+            include=rules.get("include", []),
+            exclude=rules.get("exclude", []),
+            regex=rules.get("regex", []),
+            targets=raw_ids,
+            output_path=str(output_path),
+        )
         session = ScrapeSession(
             session_id=session_id,
             rules={
@@ -89,6 +104,7 @@ class ScrapeController:
             session = self._sessions.pop(session_id, None)
             sessions = [session] if session else []
             changed = session is not None
+        remove_all = session_id is None
         for session in sessions:
             if session is None:
                 continue
@@ -99,6 +115,10 @@ class ScrapeController:
                 session.matched_count,
                 session.output_path,
             )
+            if not remove_all:
+                self._database.delete_scraper_session(session.session_id, self._user_id)
+        if remove_all and changed:
+            self._database.delete_all_scraper_sessions(self._user_id)
         if not self._sessions:
             self._remove_handler()
         return changed
@@ -175,6 +195,12 @@ class ScrapeController:
             None, self.storage.append_rows, rows, session.output_path
         )
         session.output_path = output_path
+        self._database.update_scraper_session(
+            session_id=session.session_id,
+            user_id=self._user_id,
+            matched_count=session.matched_count,
+            output_path=str(output_path),
+        )
         logger.info(
             "Menulis %s baris hasil scrape ke %s (session=%s)",
             len(rows),
@@ -191,6 +217,47 @@ class ScrapeController:
                 pass
         async with session.buffer_lock:
             await self._flush_session_locked(session)
+
+    async def restore(self) -> None:
+        records = self._database.list_scraper_sessions(self._user_id)
+        if not records:
+            return
+        for record in records:
+            session_id = int(record["id"])
+            rules = record.get("rules", {})
+            include = rules.get("include", [])
+            exclude = rules.get("exclude", [])
+            regex = rules.get("regex", [])
+            targets = record.get("targets")
+            if targets is not None:
+                targets = [int(t) for t in targets]
+            compiled: List[re.Pattern[str]] = []
+            for pattern in regex:
+                try:
+                    compiled.append(re.compile(pattern, re.IGNORECASE))
+                except re.error as exc:
+                    logger.warning("Lewati regex invalid saat restore session %s: %s", session_id, exc)
+            allowed = self._build_allowed_chats(targets) if targets else None
+            output_path_str = record.get("output_path") or str(self.storage.allocate_file())
+            output_path = Path(output_path_str)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            session = ScrapeSession(
+                session_id=session_id,
+                rules={
+                    "include": include,
+                    "exclude": exclude,
+                    "regex": regex,
+                },
+                compiled_regex=compiled,
+                allowed_chats=allowed,
+                raw_chat_ids=list(targets) if targets else None,
+                output_path=output_path,
+                matched_count=record.get("matched_count", 0),
+            )
+            self._sessions[session_id] = session
+        if self._sessions:
+            self._ensure_handler()
+            logger.info("Memulihkan %s scrape session dari database", len(self._sessions))
 
     # ------------------------------------------------------------------
     def _match_rules(self, session: ScrapeSession, text: str) -> bool:

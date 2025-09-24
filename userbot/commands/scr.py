@@ -7,7 +7,6 @@ from telethon.tl.types import Channel, Chat, User
 
 from common.validators import parse_rules_json
 
-from ..rules_store import RulesStore
 from ..scheduler import SchedulerError, resolve_targets
 from .base import CommandContext, CommandSpec
 from .registry import register
@@ -105,7 +104,6 @@ async def handle_scr(ctx: CommandContext, args: list[str]) -> None:
     except Exception as exc:
         await ctx.reply(f"Gagal mengaktifkan listener: {exc}")
         return
-    RulesStore(ctx.storage).save_rules(rules, targets)
     target_desc = await _describe_targets(ctx, targets)
     await ctx.reply(
         "Listener ON dengan ID #%d! %s. Pesan yang cocok akan dicatat ke CSV di folder data/. "

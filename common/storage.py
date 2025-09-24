@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Iterable, Optional
 
+from .database import Database
 from .masking import mask_phone
 
 
@@ -28,23 +29,35 @@ class SessionRecord:
 class SessionRepository:
     """Kelola penyimpanan session dalam JSON."""
 
-    def __init__(self, data_path: Path) -> None:
+    def __init__(self, data_path: Path, database_path: Optional[Path] = None) -> None:
         self._path = data_path
         self._lock = Lock()
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        if not self._path.exists():
-            self._write([])
+        self._database = Database.get_instance(database_path) if database_path else None
+        if self._database is None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            if not self._path.exists():
+                self._write([])
 
     def save(self, record: SessionRecord) -> None:
+        if self._database is not None:
+            self._database.ensure_user(record.owner_id, None, None, None)
+            self._database.save_session(
+                user_id=record.owner_id,
+                session_string=record.session,
+                encrypted=record.encrypted,
+                metadata={"phone_hash": record.phone_hash, **record.metadata},
+            )
+            return
         with self._lock:
             records = self._read()
             records.append(asdict(record))
-            # Batasi 100 entri
             if len(records) > 100:
                 records = records[-100:]
             self._write(records)
 
     def delete_by_owner(self, owner_id: int) -> int:
+        if self._database is not None:
+            return self._database.delete_sessions(owner_id)
         with self._lock:
             records = self._read()
             filtered = [r for r in records if r.get("owner_id") != owner_id]
@@ -53,6 +66,23 @@ class SessionRepository:
             return removed
 
     def list_by_owner(self, owner_id: int) -> list[SessionRecord]:
+        if self._database is not None:
+            rows = self._database.list_sessions(owner_id)
+            result: list[SessionRecord] = []
+            for row in rows:
+                metadata = row.get("metadata", {}) or {}
+                phone_hash = metadata.get("phone_hash", "")
+                result.append(
+                    SessionRecord(
+                        phone_hash=phone_hash,
+                        session=row["session_string"],
+                        created_at=row.get("created_at") or now_utc(),
+                        encrypted=row.get("encrypted", False),
+                        owner_id=owner_id,
+                        metadata=metadata,
+                    )
+                )
+            return result
         with self._lock:
             records = self._read()
         return [SessionRecord(**r) for r in records if r.get("owner_id") == owner_id]

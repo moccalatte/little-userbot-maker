@@ -13,7 +13,7 @@ from uuid import uuid4
 from telethon import events
 from telethon.events import NewMessage
 
-from .rules_store import ReplyGuardStore
+from common.database import Database
 
 logger = logging.getLogger("userbot.reply_guard")
 
@@ -39,18 +39,20 @@ class ReplyGuard:
     def __init__(
         self,
         client,
-        store: ReplyGuardStore,
+        database: Database,
+        user_id: int,
+        media_dir: Path,
         rate_limit_seconds: int = 30,
         log_dir: str | Path | None = None,
     ) -> None:
         self.client = client
-        self.store = store
+        self._database = database
+        self._user_id = user_id
         self.rate_limit_seconds = rate_limit_seconds
         self._event: Optional[NewMessage] = None
         self._me_id: Optional[int] = None
         self._rules: Dict[int, GuardRule] = {}
         self._next_rule_id = 1
-        media_dir = self.store.path.parent / "reply_guard_media"
         self._media_dir = media_dir.resolve()
         self._setup_logger(log_dir)
 
@@ -72,19 +74,15 @@ class ReplyGuard:
         reply_image: Optional[str] = None,
         me_id: Optional[int] = None,
         rule_id: Optional[int] = None,
+        persist: bool = True,
     ) -> int:
         if me_id is not None:
             self._me_id = me_id
         if self._me_id is None:
             raise ValueError("ID akun userbot belum tersedia.")
 
-        if rule_id is None:
-            rule_id = self._next_rule_id
-            self._next_rule_id += 1
-        else:
-            if rule_id in self._rules:
-                raise ValueError(f"Rule dengan id {rule_id} sudah ada.")
-            self._next_rule_id = max(self._next_rule_id, rule_id + 1)
+        if rule_id is not None and rule_id in self._rules:
+            raise ValueError(f"Rule dengan id {rule_id} sudah ada.")
 
         include_list = [item for item in include if item]
         exclude_list = [item for item in exclude if item]
@@ -109,6 +107,22 @@ class ReplyGuard:
             raise ValueError("Pesan balasan tidak boleh kosong.")
 
         reply_image_path = self._prepare_media_path(reply_image) if reply_image else None
+
+        if persist:
+            rule_id = self._database.add_reply_guard_rule(
+                user_id=self._user_id,
+                include=include_list,
+                exclude=exclude_list,
+                regex=regex_list,
+                targets=normalized_targets,
+                reply_text=reply_text,
+                reply_image=reply_image_path,
+            )
+            self._next_rule_id = max(self._next_rule_id, rule_id + 1)
+        else:
+            if rule_id is None:
+                raise ValueError("rule_id harus disediakan saat persist=False")
+            self._next_rule_id = max(self._next_rule_id, rule_id + 1)
 
         rule = GuardRule(
             rule_id=rule_id,
@@ -141,6 +155,8 @@ class ReplyGuard:
             self._rules.clear()
             self._remove_event_handler()
             logger.info("Semua aturan reply guard dihentikan (%s rule)", len(removed))
+            if removed:
+                self._database.delete_all_reply_guard_rules(self._user_id)
             changed = bool(removed)
         else:
             removed = self._rules.pop(rule_id, None)
@@ -149,58 +165,35 @@ class ReplyGuard:
                 changed = False
             else:
                 logger.info("Rule reply guard dihentikan id=%s", rule_id)
+                self._database.delete_reply_guard_rule(self._user_id, rule_id)
                 changed = True
-        self._persist()
         if not self._rules:
             self._remove_event_handler()
         return changed
 
     def restore(self, me_id: int) -> None:
         self._me_id = me_id
-        config = self.store.load()
-        if not config:
-            logger.info("Tidak ada konfigurasi reply guard yang tersimpan")
-            return
-        rules_data = config.get("rules", [])
-        if not rules_data and any(
-            key in config for key in ("include", "exclude", "regex", "reply_text")
-        ):
-            rules_data = [
-                {
-                    "id": config.get("id"),
-                    "include": config.get("include", []),
-                    "exclude": config.get("exclude", []),
-                    "regex": config.get("regex", []),
-                    "targets": config.get("targets"),
-                    "reply_text": config.get("reply_text", ""),
-                    "reply_image": config.get("image_path"),
-                }
-            ]
-        rate_limit = config.get("rate_limit", self.rate_limit_seconds)
-        if isinstance(rate_limit, int) and rate_limit > 0:
-            self.rate_limit_seconds = rate_limit
-        for item in rules_data:
-            try:
-                include, exclude, regex, targets, reply_text, image_path = self._extract_rule(item)
-            except ValueError as exc:
-                logger.warning("Lewati rule tersimpan karena tidak valid: %s", exc)
-                continue
-            stored_id = item.get("id") if isinstance(item, dict) else None
+        self._rules.clear()
+        db_rules = self._database.list_reply_guard_rules(self._user_id)
+        for row in db_rules:
             try:
                 self.activate(
-                    include=include,
-                    exclude=exclude,
-                    regex=regex,
-                    targets=targets,
-                    reply_text=reply_text,
-                    reply_image=image_path,
+                    include=row.get("include", []),
+                    exclude=row.get("exclude", []),
+                    regex=row.get("regex", []),
+                    targets=row.get("targets"),
+                    reply_text=row.get("reply_text", ""),
+                    reply_image=row.get("reply_image"),
                     me_id=me_id,
-                    rule_id=int(stored_id) if stored_id is not None else None,
+                    rule_id=row.get("id"),
+                    persist=False,
                 )
             except ValueError as exc:
-                logger.warning("Gagal memulihkan rule tersimpan: %s", exc)
+                logger.warning("Lewati rule id=%s karena error restore: %s", row.get("id"), exc)
         if self._rules:
             logger.info("Reply guard dipulihkan (%s rule)", len(self._rules))
+        else:
+            logger.info("Tidak ada rule reply guard tersimpan")
 
     def get_status(self) -> dict[str, object]:
         rules = []
@@ -399,51 +392,6 @@ class ReplyGuard:
         except Exception:
             logger.debug("Gagal memindahkan file gambar ke direktori media", exc_info=True)
         return str(candidate)
-
-    def _persist(self) -> None:
-        payload = {
-            "rate_limit": self.rate_limit_seconds,
-            "rules": [
-                {
-                    "id": rule.rule_id,
-                    "include": rule.include,
-                    "exclude": rule.exclude,
-                    "regex": rule.regex_patterns,
-                    "targets": rule.raw_targets,
-                    "reply_text": rule.reply_text,
-                    "reply_image": rule.reply_image,
-                }
-                for rule in sorted(self._rules.values(), key=lambda item: item.rule_id)
-            ],
-        }
-        self.store.save(payload)
-
-    def _extract_rule(
-        self, data: dict[str, object]
-    ) -> tuple[List[str], List[str], List[str], Optional[List[int]], str, Optional[str]]:
-        include = [str(item) for item in data.get("include", []) if isinstance(item, str)]
-        exclude = [str(item) for item in data.get("exclude", []) if isinstance(item, str)]
-        regex = [str(item) for item in data.get("regex", []) if isinstance(item, str)]
-        raw_targets = data.get("targets")
-        targets: Optional[List[int]]
-        if raw_targets is None:
-            targets = None
-        elif isinstance(raw_targets, list):
-            targets = []
-            for item in raw_targets:
-                try:
-                    targets.append(int(item))
-                except (TypeError, ValueError):
-                    continue
-        else:
-            raise ValueError("Struktur targets tidak valid")
-        reply_text = str(data.get("reply_text", "")).strip()
-        if not reply_text:
-            raise ValueError("Pesan balasan kosong")
-        image_path = data.get("reply_image")
-        if image_path is not None and not isinstance(image_path, str):
-            image_path = None
-        return include, exclude, regex, targets, reply_text, image_path
 
     def _normalize_raw_targets(self, targets: Optional[Sequence[int]]) -> Optional[List[int]]:
         if targets is None:

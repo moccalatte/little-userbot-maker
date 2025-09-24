@@ -9,12 +9,12 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
 from common.config import UserbotSettings
+from common.database import Database
 from common.logging_config import forward_to_telegram, setup_logging
 from common.storage import ScrapeStorage
 
 from .reply_guard import ReplyGuard
 from .router import CommandRouter
-from .rules_store import ReplyGuardStore
 from .scheduler import BroadcastScheduler
 from .scraper import ScrapeController
 from .state import UserbotRuntime
@@ -31,9 +31,9 @@ class UserbotApp:
         self.router: CommandRouter | None = None
         self.scheduler: BroadcastScheduler | None = None
         self.scraper: ScrapeController | None = None
-        self.storage = ScrapeStorage(settings.storage_dir / "scrape_output")
+        self.storage: ScrapeStorage | None = None
+        self.database = Database.get_instance(settings.database_path)
         self.me_id: int | None = None
-        self.reply_guard_store = ReplyGuardStore(settings.storage_dir)
         self.reply_guard: ReplyGuard | None = None
 
     async def start(self) -> None:
@@ -44,11 +44,30 @@ class UserbotApp:
             raise RuntimeError("Session tidak terotorisasi. Jalankan wizard untuk membuat session baru.")
         me = await self.client.get_me()
         self.me_id = me.id
-        self.scheduler = BroadcastScheduler(self.client, self.settings.rate_limit_interval)
-        self.scraper = ScrapeController(self.client, self.storage, self.settings.log_dir)
+        self.database.ensure_user(self.me_id, getattr(me, "username", None), getattr(me, "first_name", None), getattr(me, "last_name", None))
+        user_data_dir = (self.settings.storage_dir / str(self.me_id)).resolve()
+        user_data_dir.mkdir(parents=True, exist_ok=True)
+        scrape_dir = user_data_dir / "scrape_output"
+        self.storage = ScrapeStorage(scrape_dir)
+        media_dir = user_data_dir / "reply_guard_media"
+        self.scheduler = BroadcastScheduler(
+            client=self.client,
+            database=self.database,
+            user_id=self.me_id,
+            rate_limit_seconds=self.settings.rate_limit_interval,
+        )
+        self.scraper = ScrapeController(
+            client=self.client,
+            database=self.database,
+            user_id=self.me_id,
+            storage=self.storage,
+            log_dir=self.settings.log_dir,
+        )
         self.reply_guard = ReplyGuard(
             client=self.client,
-            store=self.reply_guard_store,
+            database=self.database,
+            user_id=self.me_id,
+            media_dir=media_dir,
             rate_limit_seconds=self.settings.rate_limit_interval,
             log_dir=self.settings.log_dir,
         )
@@ -66,6 +85,8 @@ class UserbotApp:
             log_dir=self.settings.log_dir,
         )
         self.reply_guard.restore(self.me_id)
+        await self.scheduler.restore()
+        await self.scraper.restore()
         self.client.add_event_handler(self._handle_command, events.NewMessage(outgoing=True))
         forward_to_telegram(self.logger, self._build_forwarder())
         self.logger.info("Userbot siap. Ketik !help dari Telegram untuk melihat perintah.")

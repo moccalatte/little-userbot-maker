@@ -41,7 +41,7 @@ class WizardBot:
         self.settings = settings
         self.logger = setup_logging("bot", settings.log_level, settings.log_dir)
         repo_path = settings.data_dir / "sessions.json"
-        self.repo = SessionRepository(repo_path)
+        self.repo = SessionRepository(repo_path, settings.database_path)
         self.persister = SessionPersister(self.repo, settings.secret_key)
         self.application: Optional[Application] = None
         self.session_output_file = settings.session_output_file

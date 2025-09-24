@@ -17,3 +17,4 @@ python userbot/main.py
 - `!info` – tampilkan status singkat seluruh menu yang sedang berjalan.
 
 Hasil listener disimpan ke CSV di `data/scrape_output/`. Log berada di `logs/userbot.log`.
+Konfigurasi multi-user (rule/jadwal/listener) tersimpan secara terpusat di database SQLite `data/userbotmaker.db`.

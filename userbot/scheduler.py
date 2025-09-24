@@ -9,6 +9,8 @@ from typing import Dict, Iterable, List, Optional
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError
 
+from common.database import Database
+
 logger = logging.getLogger("userbot")
 
 
@@ -29,8 +31,16 @@ class BroadcastJob:
 class BroadcastScheduler:
     """Kelola banyak jadwal broadcast sekaligus."""
 
-    def __init__(self, client: TelegramClient, rate_limit_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        client: TelegramClient,
+        database: Database,
+        user_id: int,
+        rate_limit_seconds: int = 30,
+    ) -> None:
         self.client = client
+        self._database = database
+        self._user_id = user_id
         self.rate_limit_seconds = rate_limit_seconds
         self._jobs: Dict[int, BroadcastJob] = {}
         self._next_job_id = 1
@@ -43,19 +53,14 @@ class BroadcastScheduler:
             raise SchedulerError("Daftar target kosong.")
         if interval_minutes <= 0:
             raise SchedulerError("Interval harus lebih besar dari 0.")
-        job_id = self._next_job_id
-        self._next_job_id += 1
         interval_seconds = interval_minutes * 60
-        job = BroadcastJob(
-            job_id=job_id,
-            message=message,
-            interval_seconds=interval_seconds,
-            targets=targets_list,
-        )
+        job_id = self._database.add_scheduler_job(self._user_id, message, interval_minutes, targets_list)
+        job = BroadcastJob(job_id=job_id, message=message, interval_seconds=interval_seconds, targets=targets_list)
         job.active.set()
         async with self._lock:
             self._jobs[job_id] = job
             job.task = asyncio.create_task(self._run_job(job_id), name=f"broadcast:{job_id}")
+            self._next_job_id = max(self._next_job_id, job_id + 1)
         logger.info(
             "Broadcast job dimulai id=%s interval=%s target=%s",
             job_id,
@@ -74,6 +79,7 @@ class BroadcastScheduler:
                 job = self._jobs.pop(job_id, None)
                 jobs = [job] if job else []
                 changed = job is not None
+        remove_all = job_id is None
         for job in jobs:
             if job is None:
                 continue
@@ -86,6 +92,10 @@ class BroadcastScheduler:
                 except asyncio.CancelledError:
                     pass
             logger.info("Broadcast job berhenti id=%s", job.job_id)
+            if not remove_all:
+                self._database.delete_scheduler_job(self._user_id, job.job_id)
+        if remove_all and changed:
+            self._database.delete_all_scheduler_jobs(self._user_id)
         return changed
 
     def get_status(self) -> dict[str, object]:
@@ -107,6 +117,28 @@ class BroadcastScheduler:
     @property
     def running(self) -> bool:
         return bool(self._jobs)
+
+    async def restore(self) -> None:
+        records = self._database.list_scheduler_jobs(self._user_id)
+        if not records:
+            return
+        for record in records:
+            job_id = int(record["id"])
+            message = record["message"]
+            interval_minutes = int(record["interval_minutes"])
+            targets = record.get("targets") or []
+            interval_seconds = interval_minutes * 60
+            job = BroadcastJob(
+                job_id=job_id,
+                message=message,
+                interval_seconds=interval_seconds,
+                targets=targets,
+            )
+            job.active.set()
+            self._jobs[job_id] = job
+            job.task = asyncio.create_task(self._run_job(job_id), name=f"broadcast:{job_id}")
+            self._next_job_id = max(self._next_job_id, job_id + 1)
+        logger.info("Memulihkan %s broadcast job dari database", len(records))
 
     # ------------------------------------------------------------------
     async def _run_job(self, job_id: int) -> None:
