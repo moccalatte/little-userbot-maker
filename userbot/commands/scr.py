@@ -11,6 +11,7 @@ from ..rules_store import RulesStore
 from ..scheduler import SchedulerError, resolve_targets
 from .base import CommandContext, CommandSpec
 from .registry import register
+from .utils import build_target_name_map, format_target_names
 
 
 async def handle_scr(ctx: CommandContext, args: list[str]) -> None:
@@ -26,6 +27,12 @@ async def handle_scr(ctx: CommandContext, args: list[str]) -> None:
         if not sessions:
             await ctx.reply("Belum ada session listener aktif.")
             return
+        target_lists = [session.get("targets") for session in sessions if session.get("targets")]
+        name_map = (
+            await build_target_name_map(ctx.client, target_lists)
+            if target_lists
+            else {}
+        )
         lines = ["Status Scraper:"]
         for session in sessions:
             targets = session.get("targets")
@@ -48,6 +55,7 @@ async def handle_scr(ctx: CommandContext, args: list[str]) -> None:
                     f"  Regex: {', '.join(rules.get('regex', [])) or '-'}",
                     f"  Target: {target_desc}",
                     f"  Pesan cocok: {session.get('matched_count', 0)}",
+                    f"  Group: {format_target_names(targets, name_map)}",
                 ]
             )
         await ctx.reply("\n".join(lines))

@@ -6,6 +6,7 @@ from typing import Optional
 from ..scheduler import BroadcastScheduler, SchedulerError, resolve_targets
 from .base import CommandContext, CommandSpec
 from .registry import register
+from .utils import build_target_name_map, format_target_names
 from common.validators import validate_interval_minutes
 
 
@@ -20,6 +21,12 @@ async def handle_sg(ctx: CommandContext, args: list[str]) -> None:
         if not jobs:
             await ctx.reply("Belum ada jadwal broadcast aktif.")
             return
+        target_lists = [job.get("targets") for job in jobs if job.get("targets")]
+        name_map = (
+            await build_target_name_map(ctx.client, target_lists)
+            if target_lists
+            else {}
+        )
         lines = ["Status Scheduler (rate limit %ss):" % status.get("rate_limit_seconds", ctx.rate_limit_seconds)]
         for job in jobs:
             targets = job.get("targets", [])
@@ -37,6 +44,7 @@ async def handle_sg(ctx: CommandContext, args: list[str]) -> None:
                     f"  Pesan: {job.get('message') or '(kosong)'}",
                     f"  Interval: {job.get('interval_minutes', 0)} menit",
                     f"  Target: {target_desc}",
+                    f"  Group: {format_target_names(targets, name_map)}",
                 ]
             )
         await ctx.reply("\n".join(lines))

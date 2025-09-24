@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from .base import CommandContext, CommandSpec
 from .registry import register
+from .utils import build_target_name_map, format_target_names
 
 USAGE = "status | stop [id]|off | <include|-|a,b> <exclude|-|x,y> <regex|-|pattern> <target|allgroup> <reply_text>"
 
@@ -60,6 +61,12 @@ async def handle_rg(ctx: CommandContext, args: list[str]) -> None:
         if not rules:
             await ctx.reply("Belum ada rule aktif. Gunakan !rg untuk menambahkan.")
             return
+        target_lists = [rule.get("targets") for rule in rules if rule.get("targets")]
+        name_map = (
+            await build_target_name_map(ctx.client, target_lists)
+            if target_lists
+            else {}
+        )
         lines = ["Status Reply Guard (rate limit %ss):" % state.get("rate_limit", ctx.rate_limit_seconds)]
         for rule in rules:
             targets = rule.get("targets")
@@ -80,6 +87,7 @@ async def handle_rg(ctx: CommandContext, args: list[str]) -> None:
                     f"  Exclude: {', '.join(rule.get('exclude', [])) or '-'}",
                     f"  Regex: {', '.join(rule.get('regex', [])) or '-'}",
                     f"  Target: {target_desc}",
+                    f"  Group: {format_target_names(targets, name_map)}",
                     f"  Media: {'ADA' if rule.get('has_media') else 'TIDAK'}",
                     f"  Balasan: {rule.get('reply_text') or '(kosong)'}",
                 ]
