@@ -23,6 +23,7 @@ class SessionRecord:
     created_at: str
     encrypted: bool
     owner_id: int
+    account_id: Optional[int] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -46,6 +47,7 @@ class SessionRepository:
                 session_string=record.session,
                 encrypted=record.encrypted,
                 metadata={"phone_hash": record.phone_hash, **record.metadata},
+                account_id=record.account_id,
             )
             return
         with self._lock:
@@ -72,6 +74,9 @@ class SessionRepository:
             for row in rows:
                 metadata = row.get("metadata", {}) or {}
                 phone_hash = metadata.get("phone_hash", "")
+                account_id = row.get("account_id")
+                if account_id is not None:
+                    metadata.setdefault("account_id", account_id)
                 result.append(
                     SessionRecord(
                         phone_hash=phone_hash,
@@ -79,13 +84,22 @@ class SessionRepository:
                         created_at=row.get("created_at") or now_utc(),
                         encrypted=row.get("encrypted", False),
                         owner_id=owner_id,
+                        account_id=account_id,
                         metadata=metadata,
                     )
                 )
             return result
         with self._lock:
             records = self._read()
-        return [SessionRecord(**r) for r in records if r.get("owner_id") == owner_id]
+        result: list[SessionRecord] = []
+        for r in records:
+            if r.get("owner_id") != owner_id:
+                continue
+            if "account_id" not in r:
+                r = dict(r)
+                r["account_id"] = None
+            result.append(SessionRecord(**r))
+        return result
 
     def _read(self) -> list[dict[str, Any]]:
         with self._path.open("r", encoding="utf-8") as handle:

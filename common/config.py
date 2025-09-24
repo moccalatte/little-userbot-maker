@@ -43,6 +43,8 @@ class UserbotSettings(BaseSettings):
     session_file: str = "session.session"
     rate_limit_interval: int = 30
     storage_dir: Path = Path("./data")
+    secret_key: Optional[str] = None
+    session_owner_id: Optional[int] = None
 
 
 PYTHON_VERSION = os.getenv("PYTHON_VERSION", "3.11")
@@ -112,6 +114,8 @@ def load_userbot_settings() -> UserbotSettings:
     rate_limit_interval = _get_int("RATE_LIMIT_INTERVAL", 30) or 30
     storage_dir = Path(os.getenv("DATA_DIR", "./data"))
     database_path = Path(os.getenv("DATABASE_PATH", str(storage_dir / "userbotmaker.db")))
+    secret_key = os.getenv("SECRET_KEY")
+    session_owner_id = _get_int("SESSION_OWNER_ID", None)
     return UserbotSettings(
         api_id=api_id,
         api_hash=api_hash,
@@ -121,5 +125,7 @@ def load_userbot_settings() -> UserbotSettings:
         telegram_log_chat_id=chat_id,
         rate_limit_interval=rate_limit_interval,
         storage_dir=storage_dir,
+        secret_key=secret_key,
+        session_owner_id=session_owner_id,
         database_path=database_path,
     )

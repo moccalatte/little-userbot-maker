@@ -9,6 +9,7 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
 from common.config import UserbotSettings
+from common.crypto import EncryptionError, build_cipher, decrypt_text
 from common.database import Database
 from common.logging_config import forward_to_telegram, setup_logging
 from common.storage import ScrapeStorage
@@ -114,6 +115,24 @@ class UserbotApp:
         await self.router.dispatch(event)
 
     def _load_session_string(self) -> str:
+        owner_id = getattr(self.settings, "session_owner_id", None)
+        if owner_id is not None:
+            record = self.database.get_latest_session(owner_id)
+            if not record:
+                raise RuntimeError(f"Tidak ditemukan session di database untuk owner {owner_id}.")
+            session_string = record.get("session_string", "").strip()
+            if not session_string:
+                raise RuntimeError("Session string kosong di database.")
+            if record.get("encrypted"):
+                cipher = build_cipher(self.settings.secret_key)
+                if not cipher:
+                    raise EncryptionError(
+                        "SECRET_KEY wajib diisi agar bisa men-dekripsi session terenkripsi dari database."
+                    )
+                session_string = decrypt_text(cipher, session_string)
+            self.logger.info("Memuat session dari database owner_id=%s", owner_id)
+            return session_string
+
         path = Path(self.settings.session_file)
         if not path.exists():
             raise FileNotFoundError(f"Session file tidak ditemukan: {path}")

@@ -31,6 +31,7 @@ class LoginContext:
     api_hash: str
     owner_id: int
     cipher_secret: Optional[str]
+    account_id: Optional[int] = None
 
 
 class SessionFlow:
@@ -153,6 +154,8 @@ class SessionFlow:
         return self._session_string or ""
 
     async def _finalize_session(self) -> None:
+        me = await self.client.get_me()
+        self.ctx.account_id = getattr(me, "id", None)
         self._session_string = self.client.session.save()
         await self.client.disconnect()
         logger.info("Session Telethon selesai dibuat untuk %s", mask_phone(self.ctx.phone))
@@ -216,6 +219,8 @@ class QRSessionFlow:
         return self._session_string or ""
 
     async def _finalize_session(self) -> None:
+        me = await self.client.get_me()
+        self.ctx.account_id = getattr(me, "id", None)
         self._session_string = self.client.session.save()
         await self.client.disconnect()
         logger.info("Session Telethon via QR selesai dibuat")
@@ -239,13 +244,17 @@ class SessionPersister:
         if not self.cipher:
             raise EncryptionError("SECRET_KEY belum diset, tidak bisa menyimpan.")
         encrypted = encrypt_text(self.cipher, session_string)
+        metadata = metadata or {}
+        if ctx.account_id is not None:
+            metadata.setdefault("account_id", ctx.account_id)
         record = SessionRecord(
             phone_hash=hash_phone_for_storage(ctx.phone),
             session=encrypted,
             created_at=now_utc(),
             encrypted=True,
             owner_id=ctx.owner_id,
-            metadata=metadata or {},
+            account_id=ctx.account_id,
+            metadata=metadata,
         )
         self.repo.save(record)
         logger.info("Menyimpan session terenkripsi untuk %s", mask_phone(ctx.phone))

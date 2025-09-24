@@ -110,6 +110,10 @@ class Database:
             cur = self._conn.cursor()
             for stmt in statements:
                 cur.execute(stmt)
+            try:
+                cur.execute("ALTER TABLE sessions ADD COLUMN account_id INTEGER")
+            except sqlite3.OperationalError:
+                pass
             self._conn.commit()
 
     # ------------------------------------------------------------------
@@ -132,22 +136,29 @@ class Database:
     # ------------------------------------------------------------------
     # Session storage
     # ------------------------------------------------------------------
-    def save_session(self, user_id: int, session_string: str, encrypted: bool, metadata: Optional[dict[str, Any]]) -> None:
+    def save_session(
+        self,
+        user_id: int,
+        session_string: str,
+        encrypted: bool,
+        metadata: Optional[dict[str, Any]],
+        account_id: Optional[int] = None,
+    ) -> None:
         payload = json.dumps(metadata or {})
         with self._lock:
             self._conn.execute(
                 """
-                INSERT INTO sessions (user_id, session_string, encrypted, metadata)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO sessions (user_id, session_string, encrypted, metadata, account_id)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (user_id, session_string, 1 if encrypted else 0, payload),
+                (user_id, session_string, 1 if encrypted else 0, payload, account_id),
             )
             self._conn.commit()
 
     def list_sessions(self, user_id: int) -> List[dict[str, Any]]:
         with self._lock:
             cur = self._conn.execute(
-                "SELECT id, session_string, encrypted, metadata, created_at FROM sessions WHERE user_id=? ORDER BY id DESC",
+                "SELECT id, session_string, encrypted, metadata, created_at, account_id FROM sessions WHERE user_id=? ORDER BY id DESC",
                 (user_id,),
             )
             rows = cur.fetchall()
@@ -158,6 +169,7 @@ class Database:
                 "encrypted": bool(row["encrypted"]),
                 "metadata": json.loads(row["metadata"] or "{}"),
                 "created_at": row["created_at"],
+                "account_id": row["account_id"],
             }
             for row in rows
         ]
@@ -167,6 +179,23 @@ class Database:
             cur = self._conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
             self._conn.commit()
             return cur.rowcount
+
+    def get_latest_session(self, user_id: int) -> Optional[dict[str, Any]]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT id, session_string, encrypted, metadata, account_id FROM sessions WHERE user_id=? ORDER BY id DESC LIMIT 1",
+                (user_id,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "session_string": row["session_string"],
+            "encrypted": bool(row["encrypted"]),
+            "metadata": json.loads(row["metadata"] or "{}"),
+            "account_id": row["account_id"],
+        }
 
     # ------------------------------------------------------------------
     # Reply guard rules
