@@ -12,7 +12,9 @@ from common.config import UserbotSettings
 from common.logging_config import forward_to_telegram, setup_logging
 from common.storage import ScrapeStorage
 
+from .reply_guard import ReplyGuard
 from .router import CommandRouter
+from .rules_store import ReplyGuardStore
 from .scheduler import BroadcastScheduler
 from .scraper import ScrapeController
 from .state import UserbotRuntime
@@ -31,6 +33,8 @@ class UserbotApp:
         self.scraper: ScrapeController | None = None
         self.storage = ScrapeStorage(settings.storage_dir / "scrape_output")
         self.me_id: int | None = None
+        self.reply_guard_store = ReplyGuardStore(settings.storage_dir)
+        self.reply_guard: ReplyGuard | None = None
 
     async def start(self) -> None:
         session_string = self._load_session_string()
@@ -42,6 +46,12 @@ class UserbotApp:
         self.me_id = me.id
         self.scheduler = BroadcastScheduler(self.client, self.settings.rate_limit_interval)
         self.scraper = ScrapeController(self.client, self.storage, self.settings.log_dir)
+        self.reply_guard = ReplyGuard(
+            client=self.client,
+            store=self.reply_guard_store,
+            rate_limit_seconds=self.settings.rate_limit_interval,
+            log_dir=self.settings.log_dir,
+        )
         self.runtime.scheduler = self.scheduler
         self.runtime.scraper = self.scraper
         self.router = CommandRouter(
@@ -52,8 +62,10 @@ class UserbotApp:
             storage=self.storage,
             me_id=self.me_id,
             rate_limit_seconds=self.settings.rate_limit_interval,
+            reply_guard=self.reply_guard,
             log_dir=self.settings.log_dir,
         )
+        self.reply_guard.restore(self.me_id)
         self.client.add_event_handler(self._handle_command, events.NewMessage(outgoing=True))
         forward_to_telegram(self.logger, self._build_forwarder())
         self.logger.info("Userbot siap. Ketik !help dari Telegram untuk melihat perintah.")

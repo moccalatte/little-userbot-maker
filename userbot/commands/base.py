@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Awaitable, Callable, List, Optional
+from typing import TYPE_CHECKING, Awaitable, Callable, List, Optional
 
 from telethon import TelegramClient
 from telethon.events import NewMessage
@@ -13,6 +13,9 @@ from common.storage import ScrapeStorage
 from ..scheduler import BroadcastScheduler
 from ..scraper import ScrapeController
 from ..state import UserbotRuntime
+
+if TYPE_CHECKING:
+    from ..reply_guard import ReplyGuard
 
 
 command_logger = logging.getLogger("userbot.commands")
@@ -30,6 +33,7 @@ class CommandContext:
     rate_limit_seconds: int
     chat_id: Optional[int]
     reply_to_msg_id: Optional[int]
+    reply_guard: "ReplyGuard"
 
     async def reply(self, message: str, **kwargs) -> None:
         target_chat = self.chat_id if self.chat_id is not None else getattr(self.event, "chat_id", None)

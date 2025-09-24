@@ -1,3 +1,3 @@
 """Paket perintah userbot."""
 
-__all__ = ["base", "registry", "help_cmd", "sg", "gg", "scr"]
+__all__ = ["base", "registry", "help_cmd", "sg", "gg", "scr", "rg"]

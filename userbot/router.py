@@ -13,12 +13,13 @@ from common.storage import ScrapeStorage
 
 from .commands.base import CommandContext, CommandSpec
 from .commands.registry import get_commands
+from .reply_guard import ReplyGuard
 from .scheduler import BroadcastScheduler
 from .scraper import ScrapeController
 from .state import UserbotRuntime
 
 # pastikan modul command terimport agar register berjalan
-from .commands import gg, help_cmd, scr, sg  # noqa: F401
+from .commands import gg, help_cmd, scr, sg, rg  # noqa: F401
 
 logger = logging.getLogger("userbot")
 
@@ -33,6 +34,7 @@ class CommandRouter:
         storage: ScrapeStorage,
         me_id: int,
         rate_limit_seconds: int,
+        reply_guard: ReplyGuard,
         log_dir: str | Path | None = None,
         prefix: str = "!",
     ) -> None:
@@ -44,6 +46,7 @@ class CommandRouter:
         self.prefix = prefix
         self.me_id = me_id
         self.rate_limit_seconds = rate_limit_seconds
+        self.reply_guard = reply_guard
         self._tasks: set[asyncio.Task] = set()
         self.command_logger = logging.getLogger("userbot.commands")
         self._ensure_command_logger(log_dir)
@@ -96,6 +99,7 @@ class CommandRouter:
             rate_limit_seconds=self.rate_limit_seconds,
             chat_id=event.chat_id,
             reply_to_msg_id=reply_to_msg_id,
+            reply_guard=self.reply_guard,
         )
         self._schedule_command(spec, ctx, args)
 
