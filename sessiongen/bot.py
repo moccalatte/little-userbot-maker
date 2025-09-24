@@ -29,7 +29,7 @@ from bot.services import LoginContext, SessionFlow, SessionPersister
 
 logger = logging.getLogger("sessiongen")
 
-ASK_PHONE, ASK_API_ID, ASK_API_HASH, WAITING_OTP, WAITING_PASSWORD, ASK_STORE = range(6)
+ASK_PHONE, ASK_API_ID, ASK_API_HASH, WAITING_OTP, WAITING_PASSWORD = range(5)
 
 
 class SessionGeneratorBot:
@@ -53,7 +53,6 @@ class SessionGeneratorBot:
                 ASK_API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_api_hash)],
                 WAITING_OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_otp)],
                 WAITING_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_password)],
-                ASK_STORE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_store)],
             },
             fallbacks=[CommandHandler("cancel", self.cancel), CommandHandler("delete", self.delete_my_sessions)],
         )
@@ -196,26 +195,13 @@ class SessionGeneratorBot:
         session_string = context.user_data["session_string"]
         await update.message.reply_text("Berikut session string-mu:\n" + session_string)
         if self.settings.secret_key:
-            await update.message.reply_text("Ingin kusimpan terenkripsi untukmu? (ya/tidak)")
-            return ASK_STORE
-        await update.message.reply_text("Selesai! Simpan session ini di tempat aman.")
-        await self._cleanup(context)
-        return ConversationHandler.END
-
-    async def handle_store(self, update: Update, context: CallbackContext) -> int:
-        answer = update.message.text.strip().lower()
-        if answer not in {"ya", "tidak", "yes", "no"}:
-            await update.message.reply_text("Jawab dengan ya atau tidak.")
-            return ASK_STORE
-        if answer in {"ya", "yes"}:
             try:
                 await self._store_session(update, context)
             except Exception as exc:
                 self.logger.exception("Gagal simpan session: %s", exc)
-                await update.message.reply_text("Tidak bisa menyimpan session. Pastikan SECRET_KEY benar.")
         else:
-            await update.message.reply_text("Baik, session tidak disimpan di server.")
-        await update.message.reply_text("Selesai! Gunakan /delete jika ingin menghapus data tersimpan.", reply_markup=ReplyKeyboardRemove())
+            self.logger.info("SECRET_KEY kosong; session tidak disimpan oleh sessiongen.")
+        await update.message.reply_text("Selesai! Simpan session ini di tempat aman.", reply_markup=ReplyKeyboardRemove())
         await self._cleanup(context)
         return ConversationHandler.END
 
@@ -226,7 +212,6 @@ class SessionGeneratorBot:
         session_string = context.user_data["session_string"]
         metadata = {"telegram_user": update.effective_user.id, "source": "sessiongen"}
         self.persister.store(flow.ctx, session_string, metadata)
-        await update.message.reply_text("Session terenkripsi tersimpan.")
 
     async def delete_my_sessions(self, update: Update, context: CallbackContext) -> int:
         removed = self.persister.delete_owner(update.effective_user.id)

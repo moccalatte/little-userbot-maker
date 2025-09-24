@@ -15,8 +15,6 @@ from telethon.events import NewMessage
 
 from common.database import Database
 
-logger = logging.getLogger("userbot.reply_guard")
-
 
 @dataclass(slots=True)
 class GuardRule:
@@ -54,6 +52,7 @@ class ReplyGuard:
         self._rules: Dict[int, GuardRule] = {}
         self._next_rule_id = 1
         self._media_dir = media_dir.resolve()
+        self.logger = logging.getLogger(f"userbot.reply_guard.{user_id}")
         self._setup_logger(log_dir)
 
     # ------------------------------------------------------------------
@@ -138,8 +137,7 @@ class ReplyGuard:
 
         self._rules[rule_id] = rule
         self._ensure_handler()
-        self._persist()
-        logger.info(
+        self.logger.info(
             "Reply guard rule ditambahkan id=%s include=%s exclude=%s regex=%s targets=%s",
             rule.rule_id,
             rule.include,
@@ -154,17 +152,17 @@ class ReplyGuard:
             removed = list(self._rules.keys())
             self._rules.clear()
             self._remove_event_handler()
-            logger.info("Semua aturan reply guard dihentikan (%s rule)", len(removed))
+            self.logger.info("Semua aturan reply guard dihentikan (%s rule)", len(removed))
             if removed:
                 self._database.delete_all_reply_guard_rules(self._user_id)
             changed = bool(removed)
         else:
             removed = self._rules.pop(rule_id, None)
             if removed is None:
-                logger.info("Tidak ada rule reply guard dengan id=%s", rule_id)
+                self.logger.info("Tidak ada rule reply guard dengan id=%s", rule_id)
                 changed = False
             else:
-                logger.info("Rule reply guard dihentikan id=%s", rule_id)
+                self.logger.info("Rule reply guard dihentikan id=%s", rule_id)
                 self._database.delete_reply_guard_rule(self._user_id, rule_id)
                 changed = True
         if not self._rules:
@@ -189,11 +187,11 @@ class ReplyGuard:
                     persist=False,
                 )
             except ValueError as exc:
-                logger.warning("Lewati rule id=%s karena error restore: %s", row.get("id"), exc)
+                self.logger.warning("Lewati rule id=%s karena error restore: %s", row.get("id"), exc)
         if self._rules:
-            logger.info("Reply guard dipulihkan (%s rule)", len(self._rules))
+            self.logger.info("Reply guard dipulihkan (%s rule)", len(self._rules))
         else:
-            logger.info("Tidak ada rule reply guard tersimpan")
+            self.logger.info("Tidak ada rule reply guard tersimpan")
 
     def get_status(self) -> dict[str, object]:
         rules = []
@@ -220,14 +218,14 @@ class ReplyGuard:
 
     async def capture_media(self, message) -> Optional[str]:
         if message is None:
-            logger.debug("capture_media: message kosong, skip pengambilan media")
+            self.logger.debug("capture_media: message kosong, skip pengambilan media")
             return None
         media = getattr(message, "media", None)
         if not media:
-            logger.debug("capture_media: tidak ada media pada pesan perintah")
+            self.logger.debug("capture_media: tidak ada media pada pesan perintah")
             return None
         if not self._is_image_message(message):
-            logger.error("Lampiran pada perintah bukan tipe gambar; operasi dibatalkan")
+            self.logger.error("Lampiran pada perintah bukan tipe gambar; operasi dibatalkan")
             raise ValueError("Lampiran harus berupa foto atau gambar.")
         self._media_dir.mkdir(parents=True, exist_ok=True)
         timestamp = int(time.time())
@@ -235,14 +233,14 @@ class ReplyGuard:
         try:
             filename = await message.download_media(file=str(self._media_dir / temp_prefix))
         except Exception as exc:
-            logger.exception("Gagal mengunduh lampiran dari pesan", exc_info=True)
+            self.logger.exception("Gagal mengunduh lampiran dari pesan", exc_info=True)
             raise ValueError("Gagal menyimpan lampiran gambar.") from exc
         if not filename:
-            logger.error("download_media mengembalikan nilai kosong")
+            self.logger.error("download_media mengembalikan nilai kosong")
             raise ValueError("Gagal menyimpan lampiran gambar.")
         path = Path(filename).resolve()
         if not path.exists() or path.is_dir():
-            logger.error("File lampiran tidak ditemukan atau bukan file biasa: %s", path)
+            self.logger.error("File lampiran tidak ditemukan atau bukan file biasa: %s", path)
             raise ValueError("Gagal menyimpan lampiran gambar.")
         suffix = path.suffix or ".jpg"
         final_target = self._media_dir / f"reply_{timestamp}_{uuid4().hex[:8]}{suffix}"
@@ -251,21 +249,21 @@ class ReplyGuard:
                 path.rename(final_target)
                 path = final_target.resolve()
         except OSError as exc:
-            logger.warning("Gagal mengganti nama file media: %s", exc)
+            self.logger.warning("Gagal mengganti nama file media: %s", exc)
             path = path.resolve()
         try:
             path.relative_to(self._media_dir)
         except ValueError:
-            logger.warning("File media berada di luar direktori target; mencoba memindahkan")
+            self.logger.warning("File media berada di luar direktori target; mencoba memindahkan")
             try:
                 if final_target.exists() and final_target != path:
                     final_target.unlink()
                 path.replace(final_target)
                 path = final_target.resolve()
             except Exception as exc:
-                logger.exception("Gagal memindahkan file media", exc_info=True)
+                self.logger.exception("Gagal memindahkan file media", exc_info=True)
                 raise ValueError("Gagal menyimpan lampiran gambar.") from exc
-        logger.info("Lampiran reply guard tersimpan di %s", path)
+        self.logger.info("Lampiran reply guard tersimpan di %s", path)
         return str(path)
 
     # ------------------------------------------------------------------
@@ -281,7 +279,7 @@ class ReplyGuard:
             try:
                 self.client.remove_event_handler(self._on_new_message, self._event)
             except Exception:
-                logger.debug("Gagal melepas handler reply guard", exc_info=True)
+                self.logger.debug("Gagal melepas handler reply guard", exc_info=True)
         self._event = None
 
     async def _on_new_message(self, event: events.NewMessage.Event) -> None:
@@ -322,7 +320,7 @@ class ReplyGuard:
             if image_path.exists() and image_path.is_file():
                 file_arg = str(image_path)
             else:
-                logger.warning(
+                self.logger.warning(
                     "File gambar rule reply guard hilang id=%s path=%s",
                     rule.rule_id,
                     rule.reply_image,
@@ -330,7 +328,7 @@ class ReplyGuard:
         try:
             await event.reply(rule.reply_text, file=file_arg)
         except Exception:
-            logger.exception(
+            self.logger.exception(
                 "Gagal mengirim auto-reply rule=%s ke chat %s (message id=%s)",
                 rule.rule_id,
                 chat_id,
@@ -338,7 +336,7 @@ class ReplyGuard:
             )
             return
         rule.last_reply[chat_id] = now
-        logger.info(
+        self.logger.info(
             "Auto-reply terkirim rule=%s chat=%s msg_id=%s",
             rule.rule_id,
             chat_id,
@@ -350,7 +348,7 @@ class ReplyGuard:
         if last is None:
             return True
         if now - last < self.rate_limit_seconds:
-            logger.info(
+            self.logger.info(
                 "Lewatkan auto-reply rule=%s chat=%s karena rate limit",
                 rule.rule_id,
                 chat_id,
@@ -390,7 +388,7 @@ class ReplyGuard:
             candidate.replace(dest)
             candidate = dest.resolve()
         except Exception:
-            logger.debug("Gagal memindahkan file gambar ke direktori media", exc_info=True)
+            self.logger.debug("Gagal memindahkan file gambar ke direktori media", exc_info=True)
         return str(candidate)
 
     def _normalize_raw_targets(self, targets: Optional[Sequence[int]]) -> Optional[List[int]]:
@@ -443,7 +441,7 @@ class ReplyGuard:
         file_path = log_path / "userbot_reply_guard.log"
         already = any(
             getattr(handler, "baseFilename", None) == str(file_path)
-            for handler in logger.handlers
+            for handler in self.logger.handlers
         )
         if not already:
             handler = RotatingFileHandler(file_path, maxBytes=5 * 1024 * 1024, backupCount=2)
@@ -453,9 +451,9 @@ class ReplyGuard:
                     datefmt="%Y-%m-%d %H:%M:%S",
                 )
             )
-            logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
-        logger.propagate = False
+            self.logger.addHandler(handler)
+        self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False
 
     def _is_image_message(self, message) -> bool:
         photo = getattr(message, "photo", None)

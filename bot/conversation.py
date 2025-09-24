@@ -33,7 +33,7 @@ from .services import LoginContext, QRSessionFlow, SessionFlow, SessionPersister
 
 logger = logging.getLogger("bot")
 
-CHOOSE_METHOD, ASK_PHONE, ASK_API_ID, ASK_API_HASH, WAITING_OTP, WAITING_PASSWORD, ASK_STORE, WAITING_QR = range(8)
+CHOOSE_METHOD, ASK_PHONE, ASK_API_ID, ASK_API_HASH, WAITING_OTP, WAITING_PASSWORD, WAITING_QR = range(7)
 
 
 class WizardBot:
@@ -61,7 +61,6 @@ class WizardBot:
                 ASK_API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_api_hash)],
                 WAITING_OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_otp)],
                 WAITING_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_password)],
-                ASK_STORE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_store_decision)],
                 WAITING_QR: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_qr_confirmation)],
             },
             fallbacks=[CommandHandler("cancel", self.cancel), CommandHandler("delete", self.delete_my_sessions)],
@@ -312,33 +311,18 @@ class WizardBot:
             "Berhasil! Berikut session string-mu (salin & simpan aman):\n" + session_string
         )
         if saved_path:
-            await update.message.reply_text(
-                f"Session juga disalin otomatis ke file: {saved_path}"
-            )
-        await update.message.reply_text(
-            "Ingin kusimpan session terenkripsi di sini supaya bisa diambil lagi? (ya/tidak)"
-        )
+            self.logger.info("Session ditulis ke file %s", saved_path)
         self.logger.info("Session terkirim ke user %s", masked_phone)
-        return ASK_STORE
 
-    async def handle_store_decision(self, update: Update, context: CallbackContext) -> int:
-        text = update.message.text.strip().lower()
-        if text not in {"ya", "tidak", "no", "yes"}:
-            await update.message.reply_text("Jawab dengan ya atau tidak.")
-            return ASK_STORE
-
-        if text in {"ya", "yes"}:
+        if self.settings.secret_key:
             try:
                 await self._store_session(update, context)
             except Exception as exc:  # log detail tanpa bocor
                 self.logger.exception("Gagal menyimpan session: %s", exc)
-                await update.message.reply_text("Gagal menyimpan session. Pastikan SECRET_KEY terpasang.")
         else:
-            await update.message.reply_text("Baik, session hanya dikirim di chat ini.")
+            self.logger.info("SECRET_KEY kosong; session tidak disimpan terenkripsi." )
 
-        await update.message.reply_text(
-            "Kapan saja kamu bisa hapus data tersimpan dengan /delete. Terima kasih!", reply_markup=ReplyKeyboardRemove()
-        )
+        await update.message.reply_text("Selesai! Simpan session ini di tempat aman.", reply_markup=ReplyKeyboardRemove())
         await self._cleanup_flow(context)
         return ConversationHandler.END
 
@@ -352,7 +336,6 @@ class WizardBot:
         encrypted = self.persister.store(login_ctx, session_string, metadata)
         masked = mask_session(encrypted)
         self.logger.info("Session terenkripsi disimpan: %s", masked)
-        await update.message.reply_text("Session terenkripsi disimpan. Gunakan /delete untuk menghapus kapan saja.")
 
     async def help_command(self, update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(
