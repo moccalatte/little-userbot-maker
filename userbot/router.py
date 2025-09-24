@@ -19,7 +19,7 @@ from .scraper import ScrapeController
 from .state import UserbotRuntime
 
 # pastikan modul command terimport agar register berjalan
-from .commands import gg, help_cmd, scr, sg, rg  # noqa: F401
+from .commands import gg, help_cmd, scr, sg, rg, info  # noqa: F401
 
 logger = logging.getLogger("userbot")
 

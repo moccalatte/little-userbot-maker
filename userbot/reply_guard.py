@@ -4,9 +4,10 @@ from __future__ import annotations
 import logging
 import re
 import time
+from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional, Sequence, Set
+from typing import Dict, Iterable, List, Optional, Sequence, Set
 from uuid import uuid4
 
 from telethon import events
@@ -17,7 +18,24 @@ from .rules_store import ReplyGuardStore
 logger = logging.getLogger("userbot.reply_guard")
 
 
+@dataclass(slots=True)
+class GuardRule:
+    rule_id: int
+    include: List[str]
+    exclude: List[str]
+    regex_patterns: List[str]
+    compiled_regex: List[re.Pattern[str]]
+    raw_targets: Optional[List[int]]
+    target_variants: Optional[Set[int]]
+    reply_text: str
+    reply_image: Optional[str]
+    created_at: float = field(default_factory=lambda: time.time())
+    last_reply: Dict[int, float] = field(default_factory=dict)
+
+
 class ReplyGuard:
+    """Menangani beberapa aturan auto-reply sekaligus."""
+
     def __init__(
         self,
         client,
@@ -29,24 +47,19 @@ class ReplyGuard:
         self.store = store
         self.rate_limit_seconds = rate_limit_seconds
         self._event: Optional[NewMessage] = None
-        self._active = False
-        self._include: list[str] = []
-        self._exclude: list[str] = []
-        self._regex_patterns: list[str] = []
-        self._compiled_regex: list[re.Pattern[str]] = []
-        self._raw_targets: Optional[list[int]] = None
-        self._targets: Optional[Set[int]] = None
-        self._reply_text: str = ""
-        self._reply_image: Optional[str] = None
-        self._last_reply: dict[int, float] = {}
         self._me_id: Optional[int] = None
+        self._rules: Dict[int, GuardRule] = {}
+        self._next_rule_id = 1
         media_dir = self.store.path.parent / "reply_guard_media"
         self._media_dir = media_dir.resolve()
         self._setup_logger(log_dir)
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
     @property
     def is_active(self) -> bool:
-        return self._active
+        return bool(self._rules)
 
     def activate(
         self,
@@ -58,104 +71,159 @@ class ReplyGuard:
         reply_text: str,
         reply_image: Optional[str] = None,
         me_id: Optional[int] = None,
-    ) -> None:
-        self._configure(
-            include=include,
-            exclude=exclude,
-            regex=regex,
-            targets=targets,
-            reply_text=reply_text,
-            reply_image=reply_image,
-            me_id=me_id,
-            persist=True,
+        rule_id: Optional[int] = None,
+    ) -> int:
+        if me_id is not None:
+            self._me_id = me_id
+        if self._me_id is None:
+            raise ValueError("ID akun userbot belum tersedia.")
+
+        if rule_id is None:
+            rule_id = self._next_rule_id
+            self._next_rule_id += 1
+        else:
+            if rule_id in self._rules:
+                raise ValueError(f"Rule dengan id {rule_id} sudah ada.")
+            self._next_rule_id = max(self._next_rule_id, rule_id + 1)
+
+        include_list = [item for item in include if item]
+        exclude_list = [item for item in exclude if item]
+        regex_list = [item for item in regex if item]
+
+        compiled_regex: List[re.Pattern[str]] = []
+        for pattern in regex_list:
+            try:
+                compiled_regex.append(re.compile(pattern, re.IGNORECASE))
+            except re.error as exc:
+                raise ValueError(f"Regex tidak valid: {pattern} ({exc})") from exc
+
+        normalized_targets = self._normalize_raw_targets(targets)
+        target_variants = (
+            self._build_target_variants(normalized_targets)
+            if normalized_targets is not None
+            else None
         )
 
-    def deactivate(self) -> None:
-        if self._event is not None:
-            try:
-                self.client.remove_event_handler(self._on_new_message, self._event)
-            except Exception:
-                logger.debug("Gagal melepas handler reply guard", exc_info=True)
-        self._event = None
-        self._active = False
-        self._last_reply.clear()
-        self.store.save(
-            {
-                "enabled": False,
-                "include": self._include,
-                "exclude": self._exclude,
-                "regex": self._regex_patterns,
-                "targets": self._raw_targets,
-                "reply_text": self._reply_text,
-                "image_path": self._reply_image,
-                "rate_limit": self.rate_limit_seconds,
-            }
+        reply_text = reply_text.strip()
+        if not reply_text:
+            raise ValueError("Pesan balasan tidak boleh kosong.")
+
+        reply_image_path = self._prepare_media_path(reply_image) if reply_image else None
+
+        rule = GuardRule(
+            rule_id=rule_id,
+            include=include_list,
+            exclude=exclude_list,
+            regex_patterns=regex_list,
+            compiled_regex=compiled_regex,
+            raw_targets=normalized_targets,
+            target_variants=target_variants,
+            reply_text=reply_text,
+            reply_image=reply_image_path,
         )
-        logger.info("Reply guard dinonaktifkan")
+
+        self._rules[rule_id] = rule
+        self._ensure_handler()
+        self._persist()
+        logger.info(
+            "Reply guard rule ditambahkan id=%s include=%s exclude=%s regex=%s targets=%s",
+            rule.rule_id,
+            rule.include,
+            rule.exclude,
+            rule.regex_patterns,
+            rule.raw_targets if rule.raw_targets is not None else "allgroup",
+        )
+        return rule_id
+
+    def deactivate(self, rule_id: Optional[int] = None) -> bool:
+        if rule_id is None:
+            removed = list(self._rules.keys())
+            self._rules.clear()
+            self._remove_event_handler()
+            logger.info("Semua aturan reply guard dihentikan (%s rule)", len(removed))
+            changed = bool(removed)
+        else:
+            removed = self._rules.pop(rule_id, None)
+            if removed is None:
+                logger.info("Tidak ada rule reply guard dengan id=%s", rule_id)
+                changed = False
+            else:
+                logger.info("Rule reply guard dihentikan id=%s", rule_id)
+                changed = True
+        self._persist()
+        if not self._rules:
+            self._remove_event_handler()
+        return changed
 
     def restore(self, me_id: int) -> None:
-        config = self.store.load()
         self._me_id = me_id
+        config = self.store.load()
         if not config:
             logger.info("Tidak ada konfigurasi reply guard yang tersimpan")
             return
-        if not config.get("enabled"):
-            logger.info("Konfigurasi reply guard tersimpan dalam keadaan nonaktif")
-            self._load_config_fields(config)
-            return
-        try:
-            include, exclude, regex, targets, reply_text, image_path = self._extract_config(config)
-        except ValueError as exc:
-            logger.warning("Konfigurasi reply guard tidak valid: %s", exc)
-            return
-        try:
-            self._configure(
-                include=include,
-                exclude=exclude,
-                regex=regex,
-                targets=targets,
-                reply_text=reply_text,
-                reply_image=image_path,
-                me_id=me_id,
-                persist=False,
-            )
-        except ValueError as exc:
-            if image_path:
-                logger.warning(
-                    "Gagal memulihkan gambar reply guard (%s). Mengaktifkan tanpa gambar.",
-                    exc,
-                )
-                self._configure(
+        rules_data = config.get("rules", [])
+        if not rules_data and any(
+            key in config for key in ("include", "exclude", "regex", "reply_text")
+        ):
+            rules_data = [
+                {
+                    "id": config.get("id"),
+                    "include": config.get("include", []),
+                    "exclude": config.get("exclude", []),
+                    "regex": config.get("regex", []),
+                    "targets": config.get("targets"),
+                    "reply_text": config.get("reply_text", ""),
+                    "reply_image": config.get("image_path"),
+                }
+            ]
+        rate_limit = config.get("rate_limit", self.rate_limit_seconds)
+        if isinstance(rate_limit, int) and rate_limit > 0:
+            self.rate_limit_seconds = rate_limit
+        for item in rules_data:
+            try:
+                include, exclude, regex, targets, reply_text, image_path = self._extract_rule(item)
+            except ValueError as exc:
+                logger.warning("Lewati rule tersimpan karena tidak valid: %s", exc)
+                continue
+            stored_id = item.get("id") if isinstance(item, dict) else None
+            try:
+                self.activate(
                     include=include,
                     exclude=exclude,
                     regex=regex,
                     targets=targets,
                     reply_text=reply_text,
-                    reply_image=None,
+                    reply_image=image_path,
                     me_id=me_id,
-                    persist=False,
+                    rule_id=int(stored_id) if stored_id is not None else None,
                 )
-            else:
-                logger.warning("Konfigurasi reply guard gagal dipulihkan: %s", exc)
-                return
-        logger.info("Reply guard dipulihkan dari konfigurasi sebelumnya")
+            except ValueError as exc:
+                logger.warning("Gagal memulihkan rule tersimpan: %s", exc)
+        if self._rules:
+            logger.info("Reply guard dipulihkan (%s rule)", len(self._rules))
 
-    def summarize(self) -> str:
-        target_desc = (
-            "semua grup"
-            if self._raw_targets is None
-            else f"{len(self._raw_targets)} target"
-        )
-        state = "aktif" if self._active else "nonaktif"
-        if self._reply_image:
-            image_path = Path(self._reply_image)
-            media_desc = image_path.name if image_path.exists() else f"{image_path.name} (missing)"
-        else:
-            media_desc = "-"
-        return (
-            f"Status {state}, balas ke {target_desc}, jeda minimal {self.rate_limit_seconds}s, "
-            f"media: {media_desc}."
-        )
+    def get_status(self) -> dict[str, object]:
+        rules = []
+        for rule in sorted(self._rules.values(), key=lambda item: item.rule_id):
+            media_label = "ADA" if rule.reply_image else "TIDAK"
+            rules.append(
+                {
+                    "id": rule.rule_id,
+                    "include": list(rule.include),
+                    "exclude": list(rule.exclude),
+                    "regex": list(rule.regex_patterns),
+                    "targets": list(rule.raw_targets) if rule.raw_targets is not None else None,
+                    "reply_text": rule.reply_text,
+                    "has_media": bool(rule.reply_image),
+                    "media_label": media_label,
+                    "created_at": rule.created_at,
+                }
+            )
+        return {
+            "active": bool(self._rules),
+            "rules": rules,
+            "rate_limit": self.rate_limit_seconds,
+        }
 
     async def capture_media(self, message) -> Optional[str]:
         if message is None:
@@ -165,11 +233,9 @@ class ReplyGuard:
         if not media:
             logger.debug("capture_media: tidak ada media pada pesan perintah")
             return None
-
         if not self._is_image_message(message):
             logger.error("Lampiran pada perintah bukan tipe gambar; operasi dibatalkan")
             raise ValueError("Lampiran harus berupa foto atau gambar.")
-
         self._media_dir.mkdir(parents=True, exist_ok=True)
         timestamp = int(time.time())
         temp_prefix = f"tmp_{timestamp}_{uuid4().hex[:8]}"
@@ -181,12 +247,10 @@ class ReplyGuard:
         if not filename:
             logger.error("download_media mengembalikan nilai kosong")
             raise ValueError("Gagal menyimpan lampiran gambar.")
-
         path = Path(filename).resolve()
         if not path.exists() or path.is_dir():
             logger.error("File lampiran tidak ditemukan atau bukan file biasa: %s", path)
             raise ValueError("Gagal menyimpan lampiran gambar.")
-
         suffix = path.suffix or ".jpg"
         final_target = self._media_dir / f"reply_{timestamp}_{uuid4().hex[:8]}{suffix}"
         try:
@@ -196,164 +260,195 @@ class ReplyGuard:
         except OSError as exc:
             logger.warning("Gagal mengganti nama file media: %s", exc)
             path = path.resolve()
-
         try:
             path.relative_to(self._media_dir)
         except ValueError:
             logger.warning("File media berada di luar direktori target; mencoba memindahkan")
             try:
-                destination = final_target
-                if destination.exists() and destination != path:
-                    destination.unlink()
-                Path(path).replace(destination)
-                path = destination.resolve()
+                if final_target.exists() and final_target != path:
+                    final_target.unlink()
+                path.replace(final_target)
+                path = final_target.resolve()
             except Exception as exc:
                 logger.exception("Gagal memindahkan file media", exc_info=True)
                 raise ValueError("Gagal menyimpan lampiran gambar.") from exc
-
         logger.info("Lampiran reply guard tersimpan di %s", path)
         return str(path)
 
-    async def _on_new_message(self, event: events.NewMessage.Event) -> None:
-        if not self._active:
-            return
-        if event.out:
-            return
-        if not (event.is_group or event.is_channel):
-            return
-        if event.sender_id is not None and self._me_id is not None and event.sender_id == self._me_id:
-            return
-        chat_id = event.chat_id
-        if chat_id is None:
-            return
-        if not self._is_target(chat_id):
-            return
-        text = event.raw_text or ""
-        if not text:
-            return
-        if not self._match_rules(text):
-            logger.debug(
-                "Pesan tidak cocok dengan rules include=%s exclude=%s regex=%s",
-                self._include,
-                self._exclude,
-                self._regex_patterns,
-            )
-            return
-        now = time.monotonic()
-        if not self._allow_send(chat_id, now):
-            logger.info("Lewatkan auto-reply di chat %s karena rate limit", chat_id)
-            return
-        file_arg: Optional[str] = None
-        if self._reply_image:
-            image_path = Path(self._reply_image)
-            if image_path.exists() and image_path.is_file():
-                file_arg = str(image_path)
-            else:
-                logger.error("File gambar untuk auto-reply tidak ditemukan: %s", self._reply_image)
-        try:
-            await event.reply(self._reply_text, file=file_arg)
-        except Exception:
-            logger.exception(
-                "Gagal mengirim auto-reply ke chat %s (message id=%s)",
-                chat_id,
-                getattr(event.message, "id", None),
-            )
-            return
-        self._last_reply[chat_id] = now
-        logger.info(
-            "Auto-reply terkirim ke chat %s msg_id=%s teks='%s'",  # noqa: G004
-            chat_id,
-            getattr(event.message, "id", None),
-            self._reply_text,
-        )
-
-    def _allow_send(self, chat_id: int, now: float) -> bool:
-        last = self._last_reply.get(chat_id)
-        if last is None:
-            return True
-        if now - last < self.rate_limit_seconds:
-            return False
-        return True
-
-    def _configure(
-        self,
-        *,
-        include: Sequence[str],
-        exclude: Sequence[str],
-        regex: Sequence[str],
-        targets: Optional[Sequence[int]],
-        reply_text: str,
-        reply_image: Optional[str],
-        me_id: Optional[int],
-        persist: bool,
-    ) -> None:
-        if me_id is not None:
-            self._me_id = me_id
-        if self._me_id is None:
-            raise ValueError("ID akun userbot belum tersedia.")
-        reply_text = reply_text.strip()
-        if not reply_text:
-            raise ValueError("Pesan balasan tidak boleh kosong.")
-        self._include = [item for item in include if item]
-        self._exclude = [item for item in exclude if item]
-        self._regex_patterns = [item for item in regex if item]
-        try:
-            self._compiled_regex = [re.compile(pattern, re.IGNORECASE) for pattern in self._regex_patterns]
-        except re.error as exc:
-            raise ValueError(f"Regex tidak valid: {exc}") from exc
-        self._raw_targets = self._normalize_raw_targets(targets)
-        self._targets = self._build_target_variants(self._raw_targets) if self._raw_targets is not None else None
-        self._reply_text = reply_text
-        self._set_reply_image(Path(reply_image) if reply_image else None)
-        self._last_reply.clear()
-        self._ensure_handler()
-        self._active = True
-        logger.info(
-            "Reply guard aktif dengan include=%s exclude=%s regex=%s targets=%s",
-            self._include,
-            self._exclude,
-            self._regex_patterns,
-            self._raw_targets if self._raw_targets is not None else "semua grup",
-        )
-        if persist:
-            self.store.save(
-                {
-                    "enabled": True,
-                    "include": self._include,
-                    "exclude": self._exclude,
-                    "regex": self._regex_patterns,
-                    "targets": self._raw_targets,
-                    "reply_text": self._reply_text,
-                    "image_path": self._reply_image,
-                    "rate_limit": self.rate_limit_seconds,
-                }
-            )
-
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
     def _ensure_handler(self) -> None:
         if self._event is None:
             self._event = events.NewMessage(incoming=True)
             self.client.add_event_handler(self._on_new_message, self._event)
 
-    def _match_rules(self, text: str) -> bool:
-        lower_text = text.lower()
-        if self._include and not all(keyword.lower() in lower_text for keyword in self._include):
+    def _remove_event_handler(self) -> None:
+        if self._event is not None:
+            try:
+                self.client.remove_event_handler(self._on_new_message, self._event)
+            except Exception:
+                logger.debug("Gagal melepas handler reply guard", exc_info=True)
+        self._event = None
+
+    async def _on_new_message(self, event: events.NewMessage.Event) -> None:
+        if not self._rules:
+            return
+        if event.out:
+            return
+        if not (event.is_group or event.is_channel):
+            return
+        if self._me_id is not None and event.sender_id == self._me_id:
+            return
+        chat_id = event.chat_id
+        if chat_id is None:
+            return
+        message_text = event.raw_text or ""
+        if not message_text:
+            return
+        now = time.monotonic()
+        for rule in list(self._rules.values()):
+            if not self._is_target(rule, chat_id):
+                continue
+            if not self._match_rule(rule, message_text):
+                continue
+            if not self._allow_send(rule, chat_id, now):
+                continue
+            await self._send_reply(rule, event, chat_id, now)
+
+    async def _send_reply(
+        self,
+        rule: GuardRule,
+        event: events.NewMessage.Event,
+        chat_id: int,
+        now: float,
+    ) -> None:
+        file_arg: Optional[str] = None
+        if rule.reply_image:
+            image_path = Path(rule.reply_image)
+            if image_path.exists() and image_path.is_file():
+                file_arg = str(image_path)
+            else:
+                logger.warning(
+                    "File gambar rule reply guard hilang id=%s path=%s",
+                    rule.rule_id,
+                    rule.reply_image,
+                )
+        try:
+            await event.reply(rule.reply_text, file=file_arg)
+        except Exception:
+            logger.exception(
+                "Gagal mengirim auto-reply rule=%s ke chat %s (message id=%s)",
+                rule.rule_id,
+                chat_id,
+                getattr(event.message, "id", None),
+            )
+            return
+        rule.last_reply[chat_id] = now
+        logger.info(
+            "Auto-reply terkirim rule=%s chat=%s msg_id=%s",
+            rule.rule_id,
+            chat_id,
+            getattr(event.message, "id", None),
+        )
+
+    def _allow_send(self, rule: GuardRule, chat_id: int, now: float) -> bool:
+        last = rule.last_reply.get(chat_id)
+        if last is None:
+            return True
+        if now - last < self.rate_limit_seconds:
+            logger.info(
+                "Lewatkan auto-reply rule=%s chat=%s karena rate limit",
+                rule.rule_id,
+                chat_id,
+            )
             return False
-        if self._exclude and any(keyword.lower() in lower_text for keyword in self._exclude):
-            return False
-        if self._compiled_regex:
-            return any(pattern.search(text) for pattern in self._compiled_regex)
         return True
 
-    def _is_target(self, chat_id: int) -> bool:
-        if self._targets is None:
+    def _is_target(self, rule: GuardRule, chat_id: int) -> bool:
+        if rule.target_variants is None:
             return True
         variants = self._chat_id_variants(chat_id)
-        return not self._targets.isdisjoint(variants)
+        return not rule.target_variants.isdisjoint(variants)
 
-    def _normalize_raw_targets(self, targets: Optional[Sequence[int]]) -> Optional[list[int]]:
+    def _match_rule(self, rule: GuardRule, text: str) -> bool:
+        lower_text = text.lower()
+        if rule.include and not all(keyword.lower() in lower_text for keyword in rule.include):
+            return False
+        if rule.exclude and any(keyword.lower() in lower_text for keyword in rule.exclude):
+            return False
+        if rule.compiled_regex:
+            return any(pattern.search(text) for pattern in rule.compiled_regex)
+        return True
+
+    def _prepare_media_path(self, image_path: Optional[str]) -> Optional[str]:
+        if not image_path:
+            return None
+        candidate = Path(image_path).expanduser().resolve()
+        if not candidate.exists() or not candidate.is_file():
+            raise ValueError(f"File gambar tidak ditemukan: {candidate}")
+        self._media_dir.mkdir(parents=True, exist_ok=True)
+        dest = self._media_dir / candidate.name
+        if dest == candidate:
+            return str(candidate)
+        try:
+            if dest.exists():
+                dest.unlink()
+            candidate.replace(dest)
+            candidate = dest.resolve()
+        except Exception:
+            logger.debug("Gagal memindahkan file gambar ke direktori media", exc_info=True)
+        return str(candidate)
+
+    def _persist(self) -> None:
+        payload = {
+            "rate_limit": self.rate_limit_seconds,
+            "rules": [
+                {
+                    "id": rule.rule_id,
+                    "include": rule.include,
+                    "exclude": rule.exclude,
+                    "regex": rule.regex_patterns,
+                    "targets": rule.raw_targets,
+                    "reply_text": rule.reply_text,
+                    "reply_image": rule.reply_image,
+                }
+                for rule in sorted(self._rules.values(), key=lambda item: item.rule_id)
+            ],
+        }
+        self.store.save(payload)
+
+    def _extract_rule(
+        self, data: dict[str, object]
+    ) -> tuple[List[str], List[str], List[str], Optional[List[int]], str, Optional[str]]:
+        include = [str(item) for item in data.get("include", []) if isinstance(item, str)]
+        exclude = [str(item) for item in data.get("exclude", []) if isinstance(item, str)]
+        regex = [str(item) for item in data.get("regex", []) if isinstance(item, str)]
+        raw_targets = data.get("targets")
+        targets: Optional[List[int]]
+        if raw_targets is None:
+            targets = None
+        elif isinstance(raw_targets, list):
+            targets = []
+            for item in raw_targets:
+                try:
+                    targets.append(int(item))
+                except (TypeError, ValueError):
+                    continue
+        else:
+            raise ValueError("Struktur targets tidak valid")
+        reply_text = str(data.get("reply_text", "")).strip()
+        if not reply_text:
+            raise ValueError("Pesan balasan kosong")
+        image_path = data.get("reply_image")
+        if image_path is not None and not isinstance(image_path, str):
+            image_path = None
+        return include, exclude, regex, targets, reply_text, image_path
+
+    def _normalize_raw_targets(self, targets: Optional[Sequence[int]]) -> Optional[List[int]]:
         if targets is None:
             return None
-        result: list[int] = []
+        result: List[int] = []
         seen: Set[int] = set()
         for item in targets:
             try:
@@ -367,7 +462,7 @@ class ReplyGuard:
             return None
         return result
 
-    def _build_target_variants(self, targets: list[int]) -> Set[int]:
+    def _build_target_variants(self, targets: Iterable[int]) -> Set[int]:
         variants: Set[int] = set()
         for target in targets:
             variants.update(self._chat_id_variants(target))
@@ -414,86 +509,7 @@ class ReplyGuard:
         logger.setLevel(logging.INFO)
         logger.propagate = False
 
-    def _extract_config(
-        self, config: dict[str, object]
-    ) -> tuple[list[str], list[str], list[str], Optional[list[int]], str, Optional[str]]:
-        include = [str(item) for item in config.get("include", []) if isinstance(item, str)]
-        exclude = [str(item) for item in config.get("exclude", []) if isinstance(item, str)]
-        regex = [str(item) for item in config.get("regex", []) if isinstance(item, str)]
-        raw_targets = config.get("targets")
-        targets: Optional[list[int]]
-        if raw_targets is None:
-            targets = None
-        elif isinstance(raw_targets, list):
-            targets = []
-            for item in raw_targets:
-                try:
-                    targets.append(int(item))
-                except (TypeError, ValueError):
-                    continue
-        else:
-            raise ValueError("Struktur target tidak valid")
-        reply_text = str(config.get("reply_text", "")).strip()
-        if not reply_text:
-            raise ValueError("Pesan balasan pada konfigurasi kosong")
-        image_path = config.get("image_path")
-        if image_path is not None and not isinstance(image_path, str):
-            image_path = None
-        return include, exclude, regex, targets, reply_text, image_path or None
-
-    def _load_config_fields(self, config: dict[str, object]) -> None:
-        try:
-            include, exclude, regex, targets, reply_text, image_path = self._extract_config(config)
-        except ValueError:
-            return
-        self._include = include
-        self._exclude = exclude
-        self._regex_patterns = regex
-        try:
-            self._compiled_regex = [re.compile(pattern, re.IGNORECASE) for pattern in regex]
-        except re.error:
-            self._compiled_regex = []
-        self._raw_targets = targets
-        self._targets = self._build_target_variants(targets) if targets else None
-        self._reply_text = reply_text
-        if image_path:
-            path = Path(image_path)
-            if path.exists() and path.is_file():
-                self._reply_image = str(path.resolve())
-            else:
-                logger.warning("File gambar reply guard hilang: %s", image_path)
-                self._reply_image = None
-        else:
-            self._reply_image = None
-
-    def _set_reply_image(self, candidate: Optional[Path]) -> None:
-        if candidate is None:
-            self._cleanup_media_path(self._reply_image)
-            self._reply_image = None
-            return
-        if not candidate.exists() or not candidate.is_file():
-            raise ValueError(f"File gambar tidak ditemukan: {candidate}")
-        resolved = candidate.resolve()
-        if self._reply_image and Path(self._reply_image) != resolved:
-            self._cleanup_media_path(self._reply_image)
-        self._reply_image = str(resolved)
-
-    def _cleanup_media_path(self, path: Optional[str]) -> None:
-        if not path:
-            return
-        candidate = Path(path)
-        try:
-            candidate.relative_to(self._media_dir)
-        except ValueError:
-            return
-        if candidate.exists():
-            try:
-                candidate.unlink()
-            except OSError:
-                logger.debug("Gagal menghapus file media lama %s", candidate, exc_info=True)
-
-    @staticmethod
-    def _is_image_message(message) -> bool:
+    def _is_image_message(self, message) -> bool:
         photo = getattr(message, "photo", None)
         if photo is not None:
             return True

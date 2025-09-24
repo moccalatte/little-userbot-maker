@@ -7,7 +7,7 @@ from typing import List, Optional
 from .base import CommandContext, CommandSpec
 from .registry import register
 
-USAGE = "<include|-|a,b> <exclude|-|x,y> <regex|-|pattern> <target|allgroup> <reply_text>"
+USAGE = "status | stop [id]|off | <include|-|a,b> <exclude|-|x,y> <regex|-|pattern> <target|allgroup> <reply_text>"
 
 
 def _split_items(raw: str) -> List[str]:
@@ -54,13 +54,58 @@ async def handle_rg(ctx: CommandContext, args: list[str]) -> None:
         return
 
     command = args[0].lower()
+    if command == "status":
+        state = ctx.reply_guard.get_status()
+        rules = state.get("rules", [])
+        if not rules:
+            await ctx.reply("Belum ada rule aktif. Gunakan !rg untuk menambahkan.")
+            return
+        lines = ["Status Reply Guard (rate limit %ss):" % state.get("rate_limit", ctx.rate_limit_seconds)]
+        for rule in rules:
+            targets = rule.get("targets")
+            if targets is None:
+                target_desc = "allgroup"
+            elif targets:
+                preview = ", ".join(str(item) for item in targets[:5])
+                if len(targets) > 5:
+                    preview += f", +{len(targets) - 5}"
+                target_desc = preview
+            else:
+                target_desc = "-"
+            lines.extend(
+                [
+                    "",
+                    f"ID #{rule.get('id')}",
+                    f"  Include: {', '.join(rule.get('include', [])) or '-'}",
+                    f"  Exclude: {', '.join(rule.get('exclude', [])) or '-'}",
+                    f"  Regex: {', '.join(rule.get('regex', [])) or '-'}",
+                    f"  Target: {target_desc}",
+                    f"  Media: {'ADA' if rule.get('has_media') else 'TIDAK'}",
+                    f"  Balasan: {rule.get('reply_text') or '(kosong)'}",
+                ]
+            )
+        await ctx.reply("\n".join(lines))
+        return
+
     if command in {"stop", "off"}:
-        if ctx.reply_guard.is_active:
-            ctx.reply_guard.deactivate()
-            await ctx.reply("Reply guard dimatikan.")
+        rule_id: Optional[int] = None
+        if len(args) > 1:
+            try:
+                rule_id = int(args[1])
+            except ValueError:
+                await ctx.reply("Format: !rg stop <id_rule> atau !rg stop untuk memadamkan semua.")
+                return
+        changed = ctx.reply_guard.deactivate(rule_id)
+        if rule_id is None:
+            if changed:
+                await ctx.reply("Seluruh rule reply guard dimatikan.")
+            else:
+                await ctx.reply("Tidak ada rule yang sedang aktif.")
         else:
-            ctx.reply_guard.deactivate()
-            await ctx.reply("Reply guard sudah nonaktif.")
+            if changed:
+                await ctx.reply(f"Rule reply guard #{rule_id} dimatikan.")
+            else:
+                await ctx.reply(f"Rule reply guard #{rule_id} tidak ditemukan.")
         return
 
     if len(args) < 5:
@@ -94,7 +139,7 @@ async def handle_rg(ctx: CommandContext, args: list[str]) -> None:
         return
 
     try:
-        ctx.reply_guard.activate(
+        rule_id = ctx.reply_guard.activate(
             include=include,
             exclude=exclude,
             regex=regex,
@@ -110,12 +155,25 @@ async def handle_rg(ctx: CommandContext, args: list[str]) -> None:
         await ctx.reply(f"Gagal mengaktifkan reply guard: {exc}")
         return
 
-    summary = ctx.reply_guard.summarize()
+    target_desc: str
+    if targets is None:
+        target_desc = "allgroup"
+    elif targets:
+        preview = ", ".join(str(item) for item in targets[:5])
+        if len(targets) > 5:
+            preview += f", +{len(targets) - 5}"
+        target_desc = preview
+    else:
+        target_desc = "-"
     await ctx.reply(
-        "Reply guard aktif. "
-        f"Include: {', '.join(include) if include else '-'}, "
-        f"Exclude: {', '.join(exclude) if exclude else '-'}, "
-        f"Regex: {', '.join(regex) if regex else '-'}; {summary}"
+        "Reply guard aktif dengan ID #%d. Include: %s | Exclude: %s | Regex: %s | Target: %s."
+        % (
+            rule_id,
+            ", ".join(include) if include else "-",
+            ", ".join(exclude) if exclude else "-",
+            ", ".join(regex) if regex else "-",
+            target_desc,
+        )
     )
 
 
@@ -126,11 +184,19 @@ register(
         usage=USAGE,
         handler=handle_rg,
         help_text=(
-            "Aktifkan auto-reply di grup. Format: !rg <include> <exclude> <regex> <target|allgroup> <reply_text>.\n"
-            "Jika ingin menyertakan gambar, lampirkan fotonya di pesan yang sama saat mengirim perintah ini. Caption balasan akan memakai reply_text.\n"
-            "Gunakan tanda koma untuk banyak kata, atau '-' bila kosong. Semua kata di include wajib muncul, exclude menolak, regex dinilai cocok jika salah satu pola match.\n"
-            "Contoh: lampirkan gambar lalu kirim !rg promo,deal hoax - allgroup Terima kasih infonya!\n"
-            "Matikan dengan !rg stop atau !rg off."
+            "Fungsi: membuat bot membalas otomatis pesan grup ketika mendeteksi kata kunci tertentu.\n\n"
+            "Langkah cepat:\n"
+            "1. Tentukan kata wajib (include), kata yang dilarang (exclude), dan pola regex bila diperlukan. Gunakan '-' jika ingin dikosongkan.\n"
+            "2. Pilih target: 'allgroup' untuk semua grup/channel, atau daftar ID (pisah koma).\n"
+            "3. Tulis balasan. Jika ingin menyertakan foto, lampirkan fotonya bersamaan saat mengirim perintah.\n\n"
+            "Contoh tanpa foto:\n"
+            "!rg need - - 2056122904 Ada yang bisa kami bantu?\n\n"
+            "Contoh dengan foto (lampirkan foto, lalu kirim perintah):\n"
+            "!rg promo - diskon allgroup Terima kasih infonya!\n\n"
+            "Perintah tambahan:\n"
+            "- !rg status — melihat daftar rule aktif beserta ID-nya.\n"
+            "- !rg stop — memadamkan semua rule.\n"
+            "- !rg stop <id> — memadamkan rule tertentu (lihat ID di !rg status)."
         ),
     )
 )

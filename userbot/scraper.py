@@ -1,15 +1,15 @@
-"""Controller listener untuk command !scr."""
+"""Controller listener untuk command !scr dengan multi session."""
 from __future__ import annotations
 
 import asyncio
 import logging
 import re
+from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set
 
 from telethon import TelegramClient, events
-from telethon.tl.patched import Message
 from telethon.tl.types import Channel, Chat, User
 
 from common.storage import ScrapeStorage
@@ -17,153 +17,223 @@ from common.storage import ScrapeStorage
 logger = logging.getLogger("userbot.scr")
 
 
+@dataclass(slots=True)
+class ScrapeSession:
+    session_id: int
+    rules: Dict[str, List[str]]
+    compiled_regex: List[re.Pattern[str]]
+    allowed_chats: Optional[Set[int]]
+    raw_chat_ids: Optional[List[int]]
+    output_path: Path
+    matched_count: int = 0
+    buffer: List[Dict[str, str]] = field(default_factory=list)
+    buffer_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    flush_task: Optional[asyncio.Task] = None
+
+
 class ScrapeController:
     def __init__(self, client: TelegramClient, storage: ScrapeStorage, log_dir: str | Path | None = None) -> None:
         self.client = client
         self.storage = storage
-        self.rules: Dict[str, List[str]] = {"include": [], "exclude": [], "regex": []}
-        self._compiled_regex: List[re.Pattern[str]] = []
+        self._sessions: Dict[int, ScrapeSession] = {}
+        self._next_session_id = 1
         self._event_builder: Optional[events.NewMessage] = None
-        self._buffer: List[Dict[str, str]] = []
-        self._buffer_lock = asyncio.Lock()
-        self._flush_task: Optional[asyncio.Task] = None
-        self._active = False
-        self._allowed_chats: Optional[Set[int]] = None
-        self._matched_count = 0
-        self._output_path: Optional[Path] = None
         self._setup_logger(log_dir)
 
+    # ------------------------------------------------------------------
     def is_active(self) -> bool:
-        return self._active
+        return bool(self._sessions)
 
-    async def start(self, rules: Dict[str, List[str]], chat_ids: Optional[List[int]] = None) -> None:
-        self.rules = rules
-        self._compiled_regex = [re.compile(pattern, re.IGNORECASE) for pattern in rules.get("regex", [])]
-        self._allowed_chats = self._build_allowed_chats(chat_ids) if chat_ids else None
-        self._matched_count = 0
-        self._output_path = self.storage.allocate_file()
-        if not self._event_builder:
+    async def start(self, rules: Dict[str, List[str]], chat_ids: Optional[List[int]] = None) -> int:
+        session_id = self._next_session_id
+        self._next_session_id += 1
+        compiled: List[re.Pattern[str]] = []
+        for pattern in rules.get("regex", []) or []:
+            try:
+                compiled.append(re.compile(pattern, re.IGNORECASE))
+            except re.error as exc:
+                raise ValueError(f"Regex tidak valid: {pattern} ({exc})") from exc
+        normalized_ids = list(dict.fromkeys(int(chat) for chat in chat_ids)) if chat_ids else None
+        allowed = self._build_allowed_chats(normalized_ids) if normalized_ids else None
+        raw_ids = normalized_ids
+        output_path = self.storage.allocate_file()
+        session = ScrapeSession(
+            session_id=session_id,
+            rules={
+                "include": list(rules.get("include", [])),
+                "exclude": list(rules.get("exclude", [])),
+                "regex": list(rules.get("regex", [])),
+            },
+            compiled_regex=compiled,
+            allowed_chats=allowed,
+            raw_chat_ids=raw_ids,
+            output_path=output_path,
+        )
+        self._sessions[session_id] = session
+        self._ensure_handler()
+        logger.info(
+            "Scrape session aktif id=%s rules=%s targets=%s output=%s",
+            session_id,
+            session.rules,
+            raw_ids if raw_ids is not None else "allgroup",
+            output_path,
+        )
+        return session_id
+
+    async def stop(self, session_id: Optional[int] = None) -> bool:
+        if session_id is None:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+            changed = bool(sessions)
+        else:
+            session = self._sessions.pop(session_id, None)
+            sessions = [session] if session else []
+            changed = session is not None
+        for session in sessions:
+            if session is None:
+                continue
+            await self._flush_session(session)
+            logger.info(
+                "Scrape session dihentikan id=%s matched=%s file=%s",
+                session.session_id,
+                session.matched_count,
+                session.output_path,
+            )
+        if not self._sessions:
+            self._remove_handler()
+        return changed
+
+    def get_status(self) -> dict[str, object]:
+        sessions = []
+        for session in sorted(self._sessions.values(), key=lambda item: item.session_id):
+            targets = session.raw_chat_ids
+            if targets is None:
+                target_desc = None
+            else:
+                target_desc = list(targets)
+            sessions.append(
+                {
+                    "id": session.session_id,
+                    "rules": session.rules,
+                    "targets": target_desc,
+                    "matched_count": session.matched_count,
+                    "output_available": session.output_path.exists(),
+                }
+            )
+        return {"sessions": sessions}
+
+    # ------------------------------------------------------------------
+    async def _on_new_message(self, event: events.NewMessage.Event) -> None:
+        if not self._sessions:
+            return
+        if not (event.is_group or event.is_channel):
+            return
+        chat_id = event.chat_id
+        if chat_id is None:
+            return
+        message_text = event.raw_text or ""
+        if not message_text:
+            return
+        for session in list(self._sessions.values()):
+            if session.allowed_chats and session.allowed_chats.isdisjoint(self._chat_id_variants(chat_id)):
+                continue
+            if not self._match_rules(session, message_text):
+                continue
+            await self._record_message(session, event, message_text)
+
+    async def _record_message(self, session: ScrapeSession, event: events.NewMessage.Event, text: str) -> None:
+        sender = await self._resolve_sender(event)
+        row = {
+            "timestamp": event.date.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "chat_id": str(event.chat_id),
+            "chat_title": getattr(event.chat, "title", ""),
+            "sender_username": sender,
+            "message_text": text.replace("\n", " "),
+            "rule_tag": ",".join(session.rules.get("include", [])),
+        }
+        async with session.buffer_lock:
+            session.buffer.append(row)
+            session.matched_count += 1
+            if len(session.buffer) >= 50:
+                await self._flush_session_locked(session)
+                return
+            if not session.flush_task or session.flush_task.done():
+                session.flush_task = asyncio.create_task(self._delayed_flush(session))
+
+    async def _delayed_flush(self, session: ScrapeSession) -> None:
+        await asyncio.sleep(1)
+        async with session.buffer_lock:
+            await self._flush_session_locked(session)
+
+    async def _flush_session_locked(self, session: ScrapeSession) -> None:
+        if not session.buffer:
+            return
+        rows = list(session.buffer)
+        session.buffer.clear()
+        loop = asyncio.get_running_loop()
+        output_path = await loop.run_in_executor(
+            None, self.storage.append_rows, rows, session.output_path
+        )
+        session.output_path = output_path
+        logger.info(
+            "Menulis %s baris hasil scrape ke %s (session=%s)",
+            len(rows),
+            output_path,
+            session.session_id,
+        )
+
+    async def _flush_session(self, session: ScrapeSession) -> None:
+        if session.flush_task and not session.flush_task.done():
+            session.flush_task.cancel()
+            try:
+                await session.flush_task
+            except asyncio.CancelledError:
+                pass
+        async with session.buffer_lock:
+            await self._flush_session_locked(session)
+
+    # ------------------------------------------------------------------
+    def _match_rules(self, session: ScrapeSession, text: str) -> bool:
+        lower_text = text.lower()
+        includes = session.rules.get("include", [])
+        if includes and not any(keyword.lower() in lower_text for keyword in includes):
+            return False
+        excludes = session.rules.get("exclude", [])
+        if excludes and any(keyword.lower() in lower_text for keyword in excludes):
+            return False
+        if session.compiled_regex:
+            return any(pattern.search(text) for pattern in session.compiled_regex)
+        return True
+
+    async def _resolve_sender(self, event: events.NewMessage.Event) -> str:
+        try:
+            sender = await event.get_sender()
+        except Exception:
+            logger.debug("Tidak bisa resolve sender", exc_info=True)
+            return ""
+        if isinstance(sender, User):
+            username = sender.username or sender.first_name or ""
+        elif isinstance(sender, Channel):
+            username = sender.username or sender.title or ""
+        elif isinstance(sender, Chat):
+            username = sender.title or ""
+        else:
+            username = getattr(sender, "title", "") or getattr(sender, "username", "")
+        return username or ""
+
+    # ------------------------------------------------------------------
+    def _ensure_handler(self) -> None:
+        if self._event_builder is None:
             self._event_builder = events.NewMessage(incoming=True, outgoing=True)
             self.client.add_event_handler(self._on_new_message, self._event_builder)
-        self._active = True
-        logger.info(
-            "Scrape listener aktif dengan rules %s untuk chats %s",
-            rules,
-            sorted(self._allowed_chats) if self._allowed_chats else "semua grup",
-        )
-        if self._output_path:
-            logger.info("Hasil scrape akan ditulis ke %s", self._output_path)
 
-    async def stop(self) -> None:
-        self._active = False
-        if self._event_builder:
+    def _remove_handler(self) -> None:
+        if self._event_builder is not None:
             try:
                 self.client.remove_event_handler(self._on_new_message, self._event_builder)
             except Exception:
                 logger.debug("Gagal remove handler", exc_info=True)
-            self._event_builder = None
-        self._allowed_chats = None
-        if self._flush_task and not self._flush_task.done():
-            self._flush_task.cancel()
-            try:
-                await self._flush_task
-            except asyncio.CancelledError:
-                pass
-        self._flush_task = None
-        async with self._buffer_lock:
-            await self._flush_buffer_locked()
-        output_path = self._output_path
-        self._output_path = None
-        logger.info("Scrape listener dihentikan setelah menangkap %s pesan", self._matched_count)
-        if output_path:
-            logger.info("Scrape listener dihentikan. Hasil terakhir tercatat di %s", output_path)
-        else:
-            logger.info("Scrape listener dihentikan")
-
-    async def _on_new_message(self, event: events.NewMessage.Event) -> None:
-        if not self._active:
-            return
-        if not (event.is_group or event.is_channel):
-            return
-        chat_id_variants = self._chat_id_variants(event.chat_id)
-        if self._allowed_chats and self._allowed_chats.isdisjoint(chat_id_variants):
-            logger.info(
-                "Pesan diabaikan karena chat %s tidak ada di daftar target %s",
-                event.chat_id,
-                sorted(self._allowed_chats),
-            )
-            return
-        try:
-            message_text = event.raw_text or ""
-            if not message_text:
-                return
-            logger.info(
-                "Memeriksa pesan di chat %s: %s",
-                event.chat_id,
-                message_text,
-            )
-            if not self._match_rules(message_text):
-                logger.info(
-                    "Pesan dari chat %s tidak cocok dengan rules %s",
-                    event.chat_id,
-                    self.rules,
-                )
-                return
-            sender = await self._resolve_sender(event)
-            row = {
-                "timestamp": event.date.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "chat_id": str(event.chat_id),
-                "chat_title": getattr(event.chat, "title", ""),
-                "sender_username": sender,
-                "message_text": message_text.replace("\n", " "),
-                "rule_tag": ",".join(self.rules.get("include", [])),
-            }
-            logger.info(
-                "Pesan cocok ditangkap dari chat %s: %s",
-                event.chat_id,
-                message_text,
-            )
-            await self._enqueue(row)
-        except Exception:
-            logger.exception("Error di listener scrape")
-
-    def _match_rules(self, text: str) -> bool:
-        lower_text = text.lower()
-        includes = self.rules.get("include", [])
-        if includes and not any(keyword.lower() in lower_text for keyword in includes):
-            return False
-        excludes = self.rules.get("exclude", [])
-        if excludes and any(keyword.lower() in lower_text for keyword in excludes):
-            return False
-        if self._compiled_regex:
-            return any(pattern.search(text) for pattern in self._compiled_regex)
-        return True
-
-    async def _enqueue(self, row: Dict[str, str]) -> None:
-        async with self._buffer_lock:
-            self._buffer.append(row)
-            self._matched_count += 1
-            if len(self._buffer) >= 50:
-                await self._flush_buffer_locked()
-                return
-            if not self._flush_task or self._flush_task.done():
-                self._flush_task = asyncio.create_task(self._delayed_flush())
-
-    async def _delayed_flush(self) -> None:
-        await asyncio.sleep(1)
-        async with self._buffer_lock:
-            await self._flush_buffer_locked()
-
-    async def _flush_buffer_locked(self) -> None:
-        if not self._buffer:
-            return
-        rows = list(self._buffer)
-        self._buffer.clear()
-        loop = asyncio.get_running_loop()
-        output_path = await loop.run_in_executor(
-            None, self.storage.append_rows, rows, self._output_path
-        )
-        logger.info("Menulis %s baris hasil scrape ke %s", len(rows), output_path)
+        self._event_builder = None
 
     def _build_allowed_chats(self, chat_ids: Iterable[int]) -> Set[int]:
         result: Set[int] = set()
@@ -209,19 +279,3 @@ class ScrapeController:
             logger.addHandler(handler)
         logger.setLevel(logging.INFO)
         logger.propagate = False
-
-    async def _resolve_sender(self, event: events.NewMessage.Event) -> str:
-        try:
-            sender = await event.get_sender()
-        except Exception:
-            logger.debug("Tidak bisa resolve sender", exc_info=True)
-            return ""
-        if isinstance(sender, User):
-            username = sender.username or sender.first_name or ""
-        elif isinstance(sender, Channel):
-            username = sender.username or sender.title or ""
-        elif isinstance(sender, Chat):
-            username = sender.title or ""
-        else:
-            username = getattr(sender, "title", "") or getattr(sender, "username", "")
-        return username or ""

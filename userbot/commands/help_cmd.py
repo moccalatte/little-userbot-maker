@@ -25,8 +25,7 @@ async def handle_help(ctx: CommandContext, args: list[str]) -> None:
 
     lines = ["Daftar perintah:"]
     for spec in sorted(commands.values(), key=lambda item: item.name):
-        usage_part = f" {spec.usage}" if spec.usage else ""
-        lines.append(f"- !{spec.name}{usage_part} — {spec.description}")
+        lines.append(f"- !{spec.name} — {spec.description}")
     lines.extend(
         [
             "",
