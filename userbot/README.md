@@ -14,6 +14,14 @@ python -m userbot.main --owner-id <telegram_user_id>
 ```
 (`SECRET_KEY` harus terisi agar session terenkripsi bisa didekripsi.)
 
+Untuk mengelola banyak userbot sekaligus, gunakan skrip `autoterminal.py`:
+```bash
+python autoterminal.py         # hanya menghasilkan .env.user_<id>
+python autoterminal.py --run   # generate + jalankan userbot untuk setiap owner di DB
+```
+
+Skrip ini membaca `.env`, mengambil daftar user_id dari `DATABASE_PATH`, membuat file `.env.user_<id>` berisi `SESSION_OWNER_ID=<id>`, dan bila memakai opsi `--run`, menjalankan `python -m userbot.main` secara paralel (tekan `Ctrl+C` untuk menghentikan semua instansi).
+
 ## Perintah
 - `!help` – daftar perintah.
 - `!sg "pesan" <interval_menit> <target|allgroup>` – jadwalkan broadcast (bisa banyak job; cek dengan `!sg status`, hentikan satu job via `!sg stop <id>` atau semua dengan `!sg stop`).
