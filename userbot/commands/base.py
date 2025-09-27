@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, List, Optional
 from telethon import TelegramClient
 from telethon.events import NewMessage
 
-from common.storage import ScrapeStorage
+from ..scraper_storage import ScrapeStorage
 
 from ..scheduler import BroadcastScheduler
 from ..scraper import ScrapeController

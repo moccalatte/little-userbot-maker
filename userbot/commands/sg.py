@@ -7,7 +7,7 @@ from ..scheduler import BroadcastScheduler, SchedulerError, resolve_targets
 from .base import CommandContext, CommandSpec
 from .registry import register
 from .utils import build_target_name_map, format_target_names
-from common.validators import validate_interval_minutes
+from ..utils import validate_interval_minutes
 
 
 async def handle_sg(ctx: CommandContext, args: list[str]) -> None:

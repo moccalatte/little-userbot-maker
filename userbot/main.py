@@ -5,8 +5,7 @@ import argparse
 import asyncio
 from typing import Sequence
 
-from common.config import PYTHON_VERSION, load_userbot_settings
-
+from .config import PYTHON_VERSION, load_userbot_settings
 from .app import run_userbot
 
 

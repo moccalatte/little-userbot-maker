@@ -8,11 +8,11 @@ from pathlib import Path
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
-from common.config import UserbotSettings
-from common.crypto import EncryptionError, build_cipher, decrypt_text
-from common.database import Database
-from common.logging_config import forward_to_telegram, setup_logging
-from common.storage import ScrapeStorage
+from .config import UserbotSettings
+from .utils import EncryptionError, build_cipher, decrypt_text
+from .database import Database
+from .config import forward_to_telegram, setup_logging
+from .scraper_storage import ScrapeStorage
 
 from .reply_guard import ReplyGuard
 from .router import CommandRouter

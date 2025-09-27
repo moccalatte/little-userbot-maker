@@ -12,8 +12,8 @@ from typing import Dict, Iterable, List, Optional, Set
 from telethon import TelegramClient, events
 from telethon.tl.types import Channel, Chat, User
 
-from common.database import Database
-from common.storage import ScrapeStorage
+from .database import Database
+from .scraper_storage import ScrapeStorage
 
 logger = logging.getLogger("userbot.scr")
 

@@ -17,9 +17,8 @@ from telethon.errors import (
 )
 from telethon.sessions import StringSession
 
-from common.crypto import EncryptionError, build_cipher, encrypt_text
-from common.masking import mask_phone
-from common.storage import SessionRecord, SessionRepository, hash_phone_for_storage, now_utc
+from .utils import EncryptionError, build_cipher, encrypt_text, mask_phone
+from .storage import SessionRecord, SessionRepository, hash_phone_for_storage
 
 logger = logging.getLogger("bot")
 

@@ -22,12 +22,9 @@ from telethon.errors import (
 
 import qrcode
 
-from common.config import BotSettings
-from common.logging_config import forward_to_telegram, setup_logging
-from common.masking import mask_phone, mask_session
-from common.storage import SessionRepository
-from common.validators import (validate_api_hash, validate_api_id,
-                               validate_phone)
+from .config import BotSettings, forward_to_telegram, setup_logging
+from .utils import mask_phone, mask_session, validate_api_hash, validate_api_id, validate_phone
+from .storage import SessionRepository
 
 from .services import LoginContext, QRSessionFlow, SessionFlow, SessionPersister
 

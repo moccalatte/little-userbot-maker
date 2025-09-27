@@ -13,7 +13,7 @@ from uuid import uuid4
 from telethon import events
 from telethon.events import NewMessage
 
-from common.database import Database
+from .database import Database
 
 
 @dataclass(slots=True)

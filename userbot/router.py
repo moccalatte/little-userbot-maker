@@ -9,7 +9,7 @@ from pathlib import Path
 
 from telethon.events import NewMessage
 
-from common.storage import ScrapeStorage
+from .scraper_storage import ScrapeStorage
 
 from .commands.base import CommandContext, CommandSpec
 from .commands.registry import get_commands

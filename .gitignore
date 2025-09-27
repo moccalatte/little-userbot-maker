@@ -1,45 +1,79 @@
-# Virtual environment
-.venv/
-
-# Python cache
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Editor directories
+# PyInstaller
+*.manifest
+*.spec
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.user_*
+bot/.env
+userbot/.env
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Logs
+logs/*.log
+*.log
+
+# Data directories
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Session files
+*.session
+
+# IDE
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
 
-# Environment and secrets
-.env
-.env.*
-secret.key
-
-# Runtime artifacts
-logs/
-*.log
-session.session
-sessiongen/session.session
-
-# Data outputs
-data/*
-!data/.gitkeep
-*.csv
-*.json
-*.db
-data/scrape_output/*.csv
-data/scrape_output/*.json
-data/scrape_output/*.db
-
-# Reports & cache
-dist/
-build/
-coverage/
-.pytest_cache/
-.mypy_cache/
-
-# OS junk
+# OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+
+# Documentation temp files
+logs/*.md

@@ -5,7 +5,7 @@ from typing import Optional
 
 from telethon.tl.types import Channel, Chat, User
 
-from common.validators import parse_rules_json
+from ..utils import parse_rules_json
 
 from ..scheduler import SchedulerError, resolve_targets
 from .base import CommandContext, CommandSpec
