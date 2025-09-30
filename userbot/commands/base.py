@@ -8,14 +8,18 @@ from typing import TYPE_CHECKING, Awaitable, Callable, List, Optional
 from telethon import TelegramClient
 from telethon.events import NewMessage
 
-from ..scraper_storage import ScrapeStorage
-
-from ..scheduler import BroadcastScheduler
-from ..scraper import ScrapeController
-from ..state import UserbotRuntime
+try:
+    from ..scheduler import BroadcastScheduler
+    from ..state import UserbotRuntime
+except ImportError:
+    from scheduler import BroadcastScheduler
+    from state import UserbotRuntime
 
 if TYPE_CHECKING:
-    from ..reply_guard import ReplyGuard
+    try:
+        from ..reply_guard import ReplyGuard
+    except ImportError:
+        from reply_guard import ReplyGuard
 
 
 command_logger = logging.getLogger("userbot.commands")
@@ -27,8 +31,6 @@ class CommandContext:
     event: NewMessage.Event
     runtime: UserbotRuntime
     scheduler: BroadcastScheduler
-    scraper: ScrapeController
-    storage: ScrapeStorage
     me_id: int
     rate_limit_seconds: int
     chat_id: Optional[int]

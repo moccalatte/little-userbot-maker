@@ -17,8 +17,12 @@ from telethon.errors import (
 )
 from telethon.sessions import StringSession
 
-from .utils import EncryptionError, build_cipher, encrypt_text, mask_phone
-from .storage import SessionRecord, SessionRepository, hash_phone_for_storage
+try:
+    from .utils import EncryptionError, build_cipher, encrypt_text, mask_phone
+    from .storage import SessionRecord, SessionRepository, hash_phone_for_storage, _now_utc
+except ImportError:
+    from utils import EncryptionError, build_cipher, encrypt_text, mask_phone
+    from storage import SessionRecord, SessionRepository, hash_phone_for_storage, _now_utc
 
 logger = logging.getLogger("bot")
 
@@ -207,12 +211,28 @@ class QRSessionFlow:
 
     async def verify_password(self, password: str) -> str:
         try:
+            # Ensure client is connected before password verification
+            if not self.client.is_connected():
+                logger.debug("QR client not connected, reconnecting...")
+                await self.client.connect()
+                
             await self.client.sign_in(password=password)
         except PasswordHashInvalidError:
             logger.warning("Password 2FA salah saat QR login")
             raise
-        except Exception:
-            logger.exception("Gagal login QR dengan password 2FA")
+        except ConnectionError as e:
+            logger.error("Connection error during QR 2FA password verification: %s", e)
+            # Try to reconnect and retry once
+            try:
+                await self.client.disconnect()
+                await asyncio.sleep(1)
+                await self.client.connect()
+                await self.client.sign_in(password=password)
+            except Exception as retry_exc:
+                logger.error("Retry failed for QR 2FA password: %s", retry_exc)
+                raise retry_exc
+        except Exception as e:
+            logger.exception("Gagal login QR dengan password 2FA: %s", e)
             raise
         await self._finalize_session()
         return self._session_string or ""
@@ -249,7 +269,7 @@ class SessionPersister:
         record = SessionRecord(
             phone_hash=hash_phone_for_storage(ctx.phone),
             session=encrypted,
-            created_at=now_utc(),
+            created_at=_now_utc(),
             encrypted=True,
             owner_id=ctx.owner_id,
             account_id=ctx.account_id,

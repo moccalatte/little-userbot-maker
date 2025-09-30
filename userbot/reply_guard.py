@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -13,7 +14,13 @@ from uuid import uuid4
 from telethon import events
 from telethon.events import NewMessage
 
-from .database import Database
+try:
+    from .database import Database
+except ImportError:
+    from database import Database
+
+# Test mode: Allow self-replies for testing purposes
+ALLOW_SELF_REPLY_FOR_TESTING = os.getenv("ALLOW_SELF_REPLY_FOR_TESTING", "false").lower() == "true"
 
 
 @dataclass(slots=True)
@@ -289,7 +296,7 @@ class ReplyGuard:
             return
         if not (event.is_group or event.is_channel):
             return
-        if self._me_id is not None and event.sender_id == self._me_id:
+        if self._me_id is not None and event.sender_id == self._me_id and not ALLOW_SELF_REPLY_FOR_TESTING:
             return
         chat_id = event.chat_id
         if chat_id is None:
@@ -434,26 +441,45 @@ class ReplyGuard:
         return -1000000000000 - channel_id
 
     def _setup_logger(self, log_dir: str | Path | None) -> None:
-        if log_dir is None:
-            return
-        log_path = Path(log_dir)
-        log_path.mkdir(parents=True, exist_ok=True)
-        file_path = log_path / "userbot_reply_guard.log"
-        already = any(
-            getattr(handler, "baseFilename", None) == str(file_path)
+        # Set log level
+        self.logger.setLevel(logging.INFO)
+        
+        # Add console handler if not already present
+        has_console = any(
+            isinstance(handler, logging.StreamHandler) and handler.stream.name == '<stdout>'
             for handler in self.logger.handlers
         )
-        if not already:
-            handler = RotatingFileHandler(file_path, maxBytes=5 * 1024 * 1024, backupCount=2)
-            handler.setFormatter(
+        if not has_console:
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(
                 logging.Formatter(
-                    "%(asctime)s | %(levelname)s | %(message)s",
+                    "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
                     datefmt="%Y-%m-%d %H:%M:%S",
                 )
             )
-            self.logger.addHandler(handler)
-        self.logger.setLevel(logging.INFO)
-        self.logger.propagate = False
+            self.logger.addHandler(console_handler)
+        
+        # Add file handler if log_dir is provided
+        if log_dir is not None:
+            log_path = Path(log_dir)
+            log_path.mkdir(parents=True, exist_ok=True)
+            file_path = log_path / "userbot_reply_guard.log"
+            already = any(
+                getattr(handler, "baseFilename", None) == str(file_path)
+                for handler in self.logger.handlers
+            )
+            if not already:
+                handler = RotatingFileHandler(file_path, maxBytes=5 * 1024 * 1024, backupCount=2)
+                handler.setFormatter(
+                    logging.Formatter(
+                        "%(asctime)s | %(levelname)s | %(message)s",
+                        datefmt="%Y-%m-%d %H:%M:%S",
+                    )
+                )
+                self.logger.addHandler(handler)
+        
+        # Enable propagation so logs appear in main userbot log
+        self.logger.propagate = True
 
     def _is_image_message(self, message) -> bool:
         photo = getattr(message, "photo", None)

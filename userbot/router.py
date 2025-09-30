@@ -9,17 +9,22 @@ from pathlib import Path
 
 from telethon.events import NewMessage
 
-from .scraper_storage import ScrapeStorage
-
-from .commands.base import CommandContext, CommandSpec
-from .commands.registry import get_commands
-from .reply_guard import ReplyGuard
-from .scheduler import BroadcastScheduler
-from .scraper import ScrapeController
-from .state import UserbotRuntime
-
-# pastikan modul command terimport agar register berjalan
-from .commands import gg, help_cmd, scr, sg, rg, info  # noqa: F401
+try:
+    from .commands.base import CommandContext, CommandSpec
+    from .commands.registry import get_commands
+    from .reply_guard import ReplyGuard
+    from .scheduler import BroadcastScheduler
+    from .state import UserbotRuntime
+    # pastikan modul command terimport agar register berjalan
+    from .commands import gg, help_cmd, sg, rg, info  # noqa: F401
+except ImportError:
+    from commands.base import CommandContext, CommandSpec
+    from commands.registry import get_commands
+    from reply_guard import ReplyGuard
+    from scheduler import BroadcastScheduler
+    from state import UserbotRuntime
+    # pastikan modul command terimport agar register berjalan
+    from commands import gg, help_cmd, sg, rg, info  # noqa: F401
 
 logger = logging.getLogger("userbot")
 
@@ -30,8 +35,6 @@ class CommandRouter:
         client,
         runtime: UserbotRuntime,
         scheduler: BroadcastScheduler,
-        scraper: ScrapeController,
-        storage: ScrapeStorage,
         me_id: int,
         rate_limit_seconds: int,
         reply_guard: ReplyGuard,
@@ -41,8 +44,6 @@ class CommandRouter:
         self.client = client
         self.runtime = runtime
         self.scheduler = scheduler
-        self.scraper = scraper
-        self.storage = storage
         self.prefix = prefix
         self.me_id = me_id
         self.rate_limit_seconds = rate_limit_seconds
@@ -93,8 +94,6 @@ class CommandRouter:
             event=event,
             runtime=self.runtime,
             scheduler=self.scheduler,
-            scraper=self.scraper,
-            storage=self.storage,
             me_id=self.me_id,
             rate_limit_seconds=self.rate_limit_seconds,
             chat_id=event.chat_id,

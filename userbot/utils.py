@@ -69,21 +69,3 @@ def validate_interval_minutes(raw: str, minimum: int = 5) -> int:
     return value
 
 
-def parse_rules_json(raw: str) -> dict[str, list[str]]:
-    try:
-        data: dict[str, Any] = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError("Format rules harus JSON valid.") from exc
-
-    include = _ensure_list_of_str(data.get("include", []), "include")
-    exclude = _ensure_list_of_str(data.get("exclude", []), "exclude")
-    regex = _ensure_list_of_str(data.get("regex", []), "regex")
-    return {"include": include, "exclude": exclude, "regex": regex}
-
-
-def _ensure_list_of_str(value: Any, key: str) -> list[str]:
-    if value in (None, ""):
-        return []
-    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-        raise ValueError(f"Field {key} harus berupa list string.")
-    return value

@@ -37,5 +37,4 @@ class PaginationState:
 class UserbotRuntime:
     pagination: Dict[int, PaginationState] = field(default_factory=dict)
     scheduler: Optional["BroadcastScheduler"] = None
-    scraper: Optional["ScrapeController"] = None
 

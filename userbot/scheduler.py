@@ -9,7 +9,10 @@ from typing import Dict, Iterable, List, Optional
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError
 
-from .database import Database
+try:
+    from .database import Database
+except ImportError:
+    from database import Database
 
 logger = logging.getLogger("userbot")
 

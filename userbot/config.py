@@ -22,14 +22,13 @@ class BaseSettings:
     log_level: str = "INFO"
     log_dir: str = "./logs"
     telegram_log_chat_id: Optional[int] = None
-    database_path: Path = Path("./data/userbotmaker.db")
+    database_url: Optional[str] = None
 
 
 @dataclass(slots=True)
 class UserbotSettings(BaseSettings):
     api_id: int = 0
     api_hash: str = ""
-    session_file: str = "session.session"
     rate_limit_interval: int = 30
     storage_dir: Path = Path("./data")
     secret_key: Optional[str] = None
@@ -50,29 +49,28 @@ def _get_int(name: str, default: Optional[int]) -> Optional[int]:
 
 
 def load_userbot_settings() -> UserbotSettings:
-    api_id = _get_int("API_ID", None) or 0
-    api_hash = os.getenv("API_HASH", "")
-    session_file = os.getenv("SESSION_FILE", "session.session")
+    # Try shared API credentials first, fallback to individual
+    api_id = _get_int("SHARED_API_ID", None) or _get_int("API_ID", None) or 0
+    api_hash = os.getenv("SHARED_API_HASH") or os.getenv("API_HASH", "")
+    
     log_level = os.getenv("LOG_LEVEL", "INFO")
     log_dir = os.getenv("LOG_DIR", "./logs")
     chat_id = _get_int("TELEGRAM_LOG_CHAT_ID", None)
     rate_limit_interval = _get_int("RATE_LIMIT_INTERVAL", 30) or 30
     storage_dir = Path(os.getenv("DATA_DIR", "./data"))
-    database_path = Path(os.getenv("DATABASE_PATH", str(storage_dir / "userbotmaker.db")))
+    database_url = os.getenv("DATABASE_URL")
     secret_key = os.getenv("SECRET_KEY")
-    session_owner_id = _get_int("SESSION_OWNER_ID", None)
     return UserbotSettings(
         api_id=api_id,
         api_hash=api_hash,
-        session_file=session_file,
         log_level=log_level,
         log_dir=log_dir,
         telegram_log_chat_id=chat_id,
         rate_limit_interval=rate_limit_interval,
         storage_dir=storage_dir,
         secret_key=secret_key,
-        session_owner_id=session_owner_id,
-        database_path=database_path,
+        session_owner_id=None,  # Will be set by main.py argument
+        database_url=database_url,
     )
 
 
@@ -82,8 +80,6 @@ def load_userbot_settings() -> UserbotSettings:
 
 def setup_logging(component: str, level: str = "INFO", log_dir: str = "./logs") -> logging.Logger:
     logger = logging.getLogger(component)
-    if logger.handlers:
-        return logger
 
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
@@ -94,15 +90,33 @@ def setup_logging(component: str, level: str = "INFO", log_dir: str = "./logs") 
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    file_handler = RotatingFileHandler(file_path, maxBytes=10 * 1024 * 1024, backupCount=2)
-    file_handler.setFormatter(formatter)
+    # Ensure component file handler exists
+    def _has_file_handler(path: Path) -> bool:
+        for h in logger.handlers:
+            if isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", None) == str(path):
+                return True
+        return False
 
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
+    if not _has_file_handler(file_path):
+        file_handler = RotatingFileHandler(file_path, maxBytes=10 * 1024 * 1024, backupCount=2)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+
+    # Combined aggregator for all userbot.* logs (attach to any userbot* logger)
+    if component.startswith("userbot"):
+        combined_path = log_path / "all_userbot.log"
+        if not _has_file_handler(combined_path):
+            combined_handler = RotatingFileHandler(combined_path, maxBytes=20 * 1024 * 1024, backupCount=3)
+            combined_handler.setFormatter(formatter)
+            logger.addHandler(combined_handler)
+
+    # Ensure a stream handler exists
+    if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(formatter)
+        logger.addHandler(stream_handler)
 
     logger.setLevel(level.upper())
-    logger.addHandler(file_handler)
-    logger.addHandler(stream_handler)
     logger.propagate = False
     logger.debug("Logger %s siap dengan level %s", component, level)
     return logger

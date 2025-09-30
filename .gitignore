@@ -39,6 +39,11 @@ venv/
 ENV/
 env/
 
+# Module virtual environments
+bot/.venv/
+userbot/.venv/
+tests/.venv/
+
 # Logs
 logs/*.log
 *.log

@@ -2,15 +2,24 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Deque
 
-from .config import setup_logging
+# Pastikan folder logs/ ada di userbot subfolder
+LOG_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), 'logs'))
+os.makedirs(LOG_DIR, exist_ok=True)
 
-# Logger dengan setup konsisten proyek
-_logger = setup_logging("userbot_abuse", "INFO")
+_logger = logging.getLogger("userbot.abuse")
+_log_file = os.path.join(LOG_DIR, "user_abuse.log")
+if not any(getattr(h, "baseFilename", None) == _log_file for h in _logger.handlers):
+    handler = logging.FileHandler(_log_file, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+    _logger.addHandler(handler)
+_logger.setLevel(logging.INFO)
+_logger.propagate = False
 
 # Konfigurasi abuse detection
 SPAM_THRESHOLD = 5

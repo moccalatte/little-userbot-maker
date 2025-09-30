@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from typing import Dict
 
-from .base import CommandSpec
+try:
+    from .base import CommandSpec
+except ImportError:
+    from commands.base import CommandSpec
 
 
 COMMANDS: Dict[str, CommandSpec] = {}

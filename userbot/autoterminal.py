@@ -4,10 +4,18 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
-import sqlite3
 import subprocess
 from pathlib import Path
 from typing import Dict, Iterable, List
+
+# PostgreSQL dependencies
+try:
+    import psycopg2
+except ImportError:
+    raise ImportError(
+        "PostgreSQL dependencies tidak tersedia. "
+        "Install dengan: pip install psycopg2-binary"
+    )
 
 BASE_ENV_KEYS = [
     "PYTHON_VERSION",
@@ -19,6 +27,7 @@ BASE_ENV_KEYS = [
     "SECRET_KEY",
     "API_ID",
     "API_HASH",
+    "DATABASE_URL",
 ]
 
 
@@ -45,10 +54,20 @@ def write_env_file(path: Path, data: Dict[str, str]) -> None:
     print(f"[autoterminal] Menulis {path}")
 
 
-def fetch_session_owner_ids(db_path: Path) -> List[int]:
-    conn = sqlite3.connect(str(db_path))
+def fetch_session_owner_ids(database_url: str) -> List[int]:
+    """Fetch unique user IDs from sessions in PostgreSQL database."""
+    conn = psycopg2.connect(database_url)
     try:
-        cur = conn.execute("SELECT DISTINCT user_id FROM sessions ORDER BY user_id")
+        cur = conn.cursor()
+        # Only get users with active subscriptions
+        cur.execute("""
+            SELECT DISTINCT s.user_id 
+            FROM sessions s 
+            JOIN users u ON s.user_id = u.id 
+            WHERE u.status_subscription = 'active' 
+            AND (u.tanggal_subs_selesai IS NULL OR u.tanggal_subs_selesai > CURRENT_TIMESTAMP)
+            ORDER BY s.user_id
+        """)
         results = [int(row[0]) for row in cur.fetchall()]
     finally:
         conn.close()
@@ -60,8 +79,6 @@ def generate_env_files(base_env: Dict[str, str], owners: Iterable[int], output_d
     for owner_id in owners:
         env_data = {key: base_env[key] for key in BASE_ENV_KEYS if key in base_env}
         env_data["SESSION_OWNER_ID"] = str(owner_id)
-        if "DATABASE_PATH" in base_env:
-            env_data["DATABASE_PATH"] = base_env["DATABASE_PATH"]
         env_file = output_dir / f".env.user_{owner_id}"
         write_env_file(env_file, env_data)
         env_files.append(env_file)
@@ -79,23 +96,25 @@ def run_userbot(env_path: Path) -> subprocess.Popen[bytes]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate env per user dan jalankan userbot.")
     parser.add_argument("--base-env", default=".env", help="Path file .env dasar (default: .env)")
-    parser.add_argument("--database", help="Path database SQLite (opsional, override)")
+    parser.add_argument("--database-url", help="PostgreSQL database URL (opsional, override)")
     parser.add_argument("--output-dir", default=".", help="Folder menyimpan env user")
     parser.add_argument("--run", action="store_true", help="Langsung jalankan userbot untuk setiap user")
     args = parser.parse_args()
 
     base_env_path = Path(args.base_env)
     base_env = load_env_file(base_env_path)
-    if args.database:
-        db_path = Path(args.database)
-    else:
-        db_path = Path(base_env.get("DATABASE_PATH", "./data/userbotmaker.db"))
-    if not db_path.exists():
-        raise FileNotFoundError(f"Database tidak ditemukan: {db_path}")
+    
+    # Get database URL from args or environment
+    database_url = args.database_url or base_env.get("DATABASE_URL")
+    if not database_url:
+        raise ValueError(
+            "DATABASE_URL harus tersedia di .env file atau lewat --database-url argument. "
+            "Format: postgresql://username:password@host/database?sslmode=require"
+        )
 
-    owners = fetch_session_owner_ids(db_path)
+    owners = fetch_session_owner_ids(database_url)
     if not owners:
-        print("[autoterminal] Tidak menemukan session di database. Jalankan wizard terlebih dahulu.")
+        print("[autoterminal] Tidak menemukan session dengan subscription aktif. Pastikan ada user dengan subscription aktif.")
         return
 
     output_dir = Path(args.output_dir)

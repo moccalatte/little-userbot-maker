@@ -1,84 +1,207 @@
-# 🤖 Userbot - Telegram Automation
+# 🤖 Userbot Engine - Core UserbotMaker
 
-Userbot berbasis Telethon yang powerful untuk automasi Telegram dengan berbagai fitur seperti broadcast, scraping, auto-reply, dan management grup.
+**🚀 Otomatis & Powerful**: Engine yang menjalankan semua userbot dari database. Beginner-friendly dengan setup minimal!
 
-## 📋 Prerequisites
+> 🎆 **Magic**: Engine otomatis membaca database, load session yang aktif, dan menjalankan userbot dengan all features. Tidak perlu manual setup per user!
 
-1. **Python 3.11+** installed
-2. **Session string** dari Bot Wizard atau file session
-3. **Telegram API credentials** dari [my.telegram.org](https://my.telegram.org)
+## 📋 Yang Dibutuhkan
 
-## ⚙️ Installation & Setup
+- **Python 3.11+** terinstall
+- **Neon PostgreSQL** database (setup di [neon.tech](https://neon.tech))
+- **Bot Wizard** sudah running (yang handle user registration)
+- **Valid environment** dengan `DATABASE_URL`
 
-### 1. Install Dependencies
+## 🚀 Setup Userbot Engine
+
+### **🐍 Langkah 1: Setup Virtual Environment**
 ```bash
 cd userbot/
+
+# Buat virtual environment
+python3 -m venv .venv
+
+# Activate virtual environment
+source .venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Setup Configuration
+### **💾 Langkah 2: Setup Database (Neon)**
+1. **Copy connection string** dari Neon dashboard
+2. **Set environment variable:**
 ```bash
-# Copy template konfigurasi
+export DATABASE_URL="postgresql://username:password@host/database?sslmode=require"
+```
+
+### **⚙️ Langkah 3: Konfigurasi (Opsional)**
+```bash
+# Copy environment template (jika perlu custom config)
 cp .env.example .env
-
-# Edit file .env
-nano .env
+nano .env  # Edit sesuai kebutuhan
 ```
 
-### 3. Fill Configuration
-Edit file `.env` dan pilih salah satu metode session:
-
-#### Method A: Using Session File
+**File .env (minimal):**
 ```env
-# API dari my.telegram.org
+# Database URL (WAJIB)
+DATABASE_URL=postgresql://username:password@host/database?sslmode=require
+
+# API credentials (WAJIB - sama dengan Bot Wizard)
 API_ID=12345678
 API_HASH=abcd1234567890abcd1234567890abcd
 
-# Path ke file session
-SESSION_FILE=../session.session
+# Logging (opsional)
+LOG_LEVEL=INFO
+LOG_DIR=../logs
 ```
 
-#### Method B: Using Database Session (dari Bot Wizard)
-```env
-# API dari my.telegram.org
-API_ID=12345678
-API_HASH=abcd1234567890abcd1234567890abcd
+> 📋 **Note**: Engine otomatis detect session dari database. Tidak perlu manual session setup!
 
-# ID user yang buat session via bot wizard
-SESSION_OWNER_ID=123456789
+## 🚀 Menjalankan Userbot Engine
 
-# Secret key untuk dekripsi (sama dengan bot wizard)
-SECRET_KEY=abcd1234567890abcd1234567890abcd1234567890abcd==
-```
-
-## 🚀 Running the Userbot
-
-### Single User Mode
+### **⚡ Metode Utama (Helper Script)**
 ```bash
-# Method 1: Direct run
+# Jalankan dengan helper script (recommended)
 cd userbot/
-python main.py
-
-# Method 2: From root directory
-python -m userbot.main
-
-# Method 3: With specific user ID (database mode)
-python -m userbot.main --owner-id 123456789
+./run_userbot.sh 123456789  # Ganti dengan Telegram ID user
 ```
 
-### Multi User Mode (Advanced)
-Untuk menjalankan banyak userbot sekaligus:
+### **🔧 Metode Manual**
 ```bash
-# Generate config files untuk semua user di database
+# Jalankan userbot untuk user tertentu (ambil dari database)
+cd userbot/
+source .venv/bin/activate  # SELALU activate venv dulu
+python main.py --owner-id 123456789  # Ganti dengan Telegram ID user
+```
+
+> 📋 **Penting**: `--owner-id` adalah Telegram ID user yang sessionnya sudah dibuat melalui Bot Wizard
+
+**Apa yang terjadi:**
+1. ✅ Engine connect ke Neon database
+2. ✅ Load semua session dengan subscription aktif
+3. ✅ Start userbot untuk setiap user
+4. ✅ Monitor health dan auto-reconnect
+
+### **🛠️ Metode Advanced (Multi-Process)**
+Untuk server dengan traffic tinggi:
+```bash
+# Pastikan venv active
+source .venv/bin/activate
+
+# Generate individual configs untuk setiap user
 python autoterminal.py
 
-# Generate + jalankan semua userbot
+# Jalankan semua userbot dalam process terpisah
 python autoterminal.py --run
 ```
 
-## 📱 Available Commands
+### **🧪 Test Mode**
+```bash
+# Test basic connectivity (dari tests folder)
+cd ../tests
+source ../.venv/bin/activate  # Use shared venv untuk tests
+python run_tests.py quick
 
-Semua command menggunakan prefix `!`
+# Test with specific user session
+cd ../userbot
+source .venv/bin/activate
+python main.py --owner-id 123456789
+```
+
+## 🐍 **Virtual Environment Management**
+
+### **🚀 Quick Setup**
+```bash
+cd userbot/
+
+# Buat venv (sekali aja)
+python3 -m venv .venv
+
+# Activate (setiap kali mau run)
+source .venv/bin/activate
+
+# Install deps (sekali aja atau kalo ada update)
+pip install -r requirements.txt
+```
+
+### **⚙️ Daily Usage**
+```bash
+# Setiap kali mau run userbot engine:
+cd userbot/
+source .venv/bin/activate  # ⚡ WAJIB!
+python main.py
+```
+
+### **🔄 Auto-start Script (Optional)**
+```bash
+#!/bin/bash
+# File: start_userbot.sh
+cd userbot/
+source .venv/bin/activate
+python main.py
+
+# Make executable:
+# chmod +x start_userbot.sh
+# ./start_userbot.sh
+```
+
+### **🧪 Check Venv Status**
+```bash
+# Check apakah venv aktif
+which python  # Harus show path ke .venv/bin/python
+
+# Check installed packages
+pip list | grep -E "telethon|psycopg2|python-telegram-bot"
+
+# Check Python version
+python --version  # Harus 3.11+
+
+# Deactivate venv (kalo perlu)
+deactivate
+```
+
+### **🐛 Troubleshooting Venv**
+- ✅ **Venv not found**: Buat ulang dengan `python3 -m venv .venv`
+- ✅ **Permission denied**: Pakai `python3 -m venv .venv --clear`
+- ✅ **Import errors**: Re-install dengan `pip install -r requirements.txt`
+- ✅ **Database errors**: Check `DATABASE_URL` di `.env`
+- ✅ **Telethon errors**: Check `API_ID` dan `API_HASH` di `.env`
+
+### **🛠️ Production Tips**
+```bash
+# Pakai screen untuk background process
+screen -S userbot
+source .venv/bin/activate
+python main.py
+# Ctrl+A, D untuk detach
+
+# Atau pakai systemd service (advanced)
+# /etc/systemd/system/userbot.service
+```
+
+## 🤔 **Cara Kerja Engine**
+
+### **🔄 Automatic Flow:**
+1. **Database Polling**: Engine baca Neon database setiap X detik
+2. **Session Loading**: Load session user dengan subscription aktif
+3. **Client Creation**: Buat TelegramClient untuk setiap session
+4. **Feature Application**: Apply configs (broadcast, auto-reply, etc)
+5. **Health Monitoring**: Monitor kesehatan session dan reconnect jika perlu
+
+### **📊 User Session Lifecycle:**
+```
+User daftar via Bot Wizard → Payment success → Session saved → Engine detect → Userbot active
+```
+
+### **🚑 Error Handling:**
+- 🔄 **Auto Reconnect**: Session terputus otomatis reconnect
+- 📋 **Subscription Check**: Expired subscription otomatis disabled
+- 📝 **Logging**: Semua error logged untuk debugging
+- 📧 **Health Reports**: Real-time monitoring status
+
+## 📱 Commands untuk User
+
+**Beginner-friendly**: User chat di grup dengan prefix `!`
 
 ### 💬 Basic Commands
 - `!help` - Daftar semua command
@@ -119,21 +242,6 @@ Manage dan lihat daftar grup:
 !gg refresh
 ```
 
-### 🔍 Message Scraper (`!scr`)
-Scrape pesan dari grup dengan aturan tertentu:
-```
-# Scrape dengan aturan JSON
-!scr '{"keywords": ["bitcoin", "crypto"], "min_length": 10}'
-
-# Cek status scraper
-!scr status
-
-# Stop scraper tertentu
-!scr stop 1
-
-# Stop semua scraper
-!scr stop
-```
 
 ### 🤖 Auto Reply (`!rg`)
 Buat rule auto-reply untuk pesan:
@@ -158,6 +266,29 @@ Buat rule auto-reply untuk pesan:
 - `target`: ID grup atau "allgroup"
 - `reply_text`: Teks balasan
 
+## 🛡️ Owner/Admin Detection
+
+**Auto-detected dari Bot Wizard environment - tidak perlu setup manual!**
+
+### Cara Kerja:
+1. **Bot Wizard** set `OWNER_TELEGRAM_IDS` di `/bot/.env`
+2. **Userbot** auto-detect owner dari environment
+3. **Owner** mendapat admin access tanpa setup database
+
+### Environment Detection:
+```bash
+# Userbot akan cek environment variables ini:
+OWNER_TELEGRAM_IDS=123456789,987654321  # dari Bot Wizard
+ADMIN_TELEGRAM_IDS=123456789            # alternatif
+```
+
+### Validation Priority:
+1. **Environment Owner** (dari OWNER_TELEGRAM_IDS)
+2. **Database Admin** (manual added via database)
+3. **Regular User** (perlu bayar di Bot Wizard)
+
+**💡 Tidak perlu script manual lagi! Semua auto-detected dari Bot Wizard environment.**
+
 ## 📂 File Structure
 ```
 userbot/
@@ -165,7 +296,6 @@ userbot/
 │   ├── base.py         # Base command classes
 │   ├── gg.py           # Group management
 │   ├── sg.py           # Broadcast scheduler
-│   ├── scr.py          # Message scraper
 │   ├── rg.py           # Auto reply
 │   └── info.py         # Status info
 ├── main.py             # Entry point
@@ -173,9 +303,10 @@ userbot/
 ├── config.py           # Configuration
 ├── router.py           # Command router
 ├── scheduler.py        # Broadcast scheduler
-├── scraper.py          # Message scraper
 ├── reply_guard.py      # Auto reply system
 ├── database.py         # Database operations
+├── admin_utils.py      # Admin management functions
+├── wizard_utils.py     # Bot Wizard integration
 └── requirements.txt    # Dependencies
 ```
 
@@ -183,19 +314,13 @@ userbot/
 
 ### Database
 - **Location**: `../data/userbotmaker.db`
-- **Contains**: Sessions, broadcast jobs, scraper rules, reply rules
-
-### Scraper Output
-- **Location**: `../data/scrape_output/`
-- **Format**: CSV files dengan timestamp
-- **Columns**: Date, Chat, User, Message, etc.
+- **Contains**: Sessions, broadcast jobs, reply rules
 
 ### Logs
 - **Console**: Real-time output
 - **File**: `../logs/userbot.log`
 - **Components**: 
   - `userbot_commands.log` - Command executions
-  - `userbot_scr.log` - Scraper activities
   - `userbot_reply_guard.log` - Auto-reply activities
 
 ## 🐛 Troubleshooting
@@ -215,10 +340,6 @@ userbot/
 - ✅ Cek apakah grup ID benar
 - ✅ Lihat log scheduler untuk error
 
-### Scraper tidak capture pesan
-- ✅ Pastikan JSON rules valid
-- ✅ Cek apakah userbot ada di grup target
-- ✅ Periksa folder output `../data/scrape_output/`
 
 ## ⚡ Advanced Features
 
@@ -240,9 +361,44 @@ Gunakan `autoterminal.py` untuk:
 - Run multiple userbot instances
 - Centralized management
 
-## 🔄 Integration with Bot Wizard
+## 🔄 Integration dengan Bot Wizard
 
-1. Buat session dengan Bot Wizard
-2. Set `SESSION_OWNER_ID` dengan user ID Anda
-3. Set `SECRET_KEY` yang sama di kedua komponen
-4. Userbot otomatis load session dari database
+**Userbot terintegrasi penuh dengan Bot Wizard - config dan control via Web UI!**
+
+### Auto Config dari Bot Wizard:
+1. User create userbot di Bot Wizard
+2. Bot Wizard save config ke database dengan shared API
+3. Userbot auto-polling database setiap 30 detik
+4. Config changes langsung apply ke userbot!
+
+### Config Sync Flow:
+```
+Bot Wizard UI → Database → Userbot (auto-apply)
+```
+
+### Features yang Bisa Dikontrol:
+- 📢 **Broadcast Scheduler**: Message, interval, target groups
+- 🤖 **Auto Reply Rules**: Keywords, responses, targets
+- ⚙️ **Feature Toggle**: Enable/disable via Bot Wizard
+
+### No Manual Commands Needed:
+- ❌ **Old**: User harus manual `!sg`, `!rg` commands
+- ✅ **New**: User setup via Bot Wizard UI, userbot auto-apply
+
+### Database Session Mode:
+```env
+# Di userbot/.env
+SESSION_OWNER_ID=123456789
+SECRET_KEY=same_key_as_bot_wizard
+SHARED_API_ID=12345678  # fallback jika bot wizard ga ada
+SHARED_API_HASH=abcd... # fallback
+```
+
+### Code Integration:
+```python
+# Config watcher otomatis running
+# Cek database setiap 30s untuk changes
+# Apply broadcast/reply configs otomatis
+```
+
+**🎉 Result: User-friendly web control + powerful userbot automation!**
